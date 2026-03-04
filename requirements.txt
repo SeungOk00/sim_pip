@@ -1,2 +1,11 @@
 pyyaml>=6.0
 dataclasses-json>=0.6.0
+pyyaml>=6.0
+dataclasses-json>=0.6.0
+omegaconf
+hydra-core 
+pyrsistent
+dgl -f https://data.dgl.ai/wheels/torch-2.2/cu121/repo.html
+torchdata<0.8.0
+e3nn
+torch==2.2.1
