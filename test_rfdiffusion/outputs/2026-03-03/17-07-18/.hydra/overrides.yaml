@@ -1,0 +1,8 @@
+- inference.input_pdb=target.pdb
+- inference.output_prefix=outputs/binder
+- inference.num_designs=2
+- contigmap.contigs=[A1-150/0 80-80]
+- ppi.hotspot_res=[A59,A83,A91]
+- diffuser.T=50
+- denoiser.noise_scale_ca=0
+- denoiser.noise_scale_frame=0
