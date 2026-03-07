@@ -11,6 +11,9 @@ DEFAULT_CONFIG = {
     
     # Paths
     "paths": {
+        "inputs_pdb": "inputs/pdb",
+        "inputs_fasta": "inputs/fasta",
+        "outputs": "outputs",
         "targets": "targets",
         "runs": "runs",
         "candidates": "candidates",
@@ -23,17 +26,24 @@ DEFAULT_CONFIG = {
             "path": "/home01/hpc194a02/test/sim_pip/RFdiffusion",
             "de_novo_T": 50,
             "refinement_T": 15,
-            "num_designs": 10,
+            "num_designs": 2,
+            "target_residues": "",
+            "binder_length": "",
+            "noise_scale": 0.0,
+            "output_prefix": "binder",
             "max_refinement_iterations": 3
         },
         "proteinmpnn": {
             "path": "/home01/hpc194a02/test/sim_pip/ProteinMPNN",
-            "num_seq_per_target": 10,
-            "sampling_temps": [0.1, 0.2, 0.3]
+            "num_seq_per_target": 8,
+            "sampling_temps": [0.1, 0.2],
+            "batch_size": 1,
+            "seed": 37,
+            "design_chains": "B",
+            "fixed_positions_jsonl": ""
         },
         "max_candidates_per_target": 100
     },
-    
     # Phase 3-A: Fast Screening
     "phase3_fast": {
         "chai": {
@@ -154,3 +164,5 @@ class Config:
     def to_dict(self) -> Dict:
         """Get full configuration as dictionary"""
         return self.config.copy()
+
+

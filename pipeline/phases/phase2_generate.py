@@ -57,6 +57,14 @@ class Phase2GenerativeDesign:
         project_root = Path(self.config['project_root'])
         run_dir = project_root / self.config['paths']['runs'] / state.run_id / "phase2_generate"
         ensure_dir(run_dir)
+        now = datetime.now()
+        date_dir = now.strftime("%Y-%m-%d")
+        time_dir = now.strftime("%H-%M-%S")
+        outputs_root = project_root / self.config['paths']['outputs']
+        rfdiffusion_out_dir = outputs_root / "rfdiffusion" / date_dir / time_dir
+        proteinmpnn_out_dir = outputs_root / "proteinmpnn" / date_dir / time_dir
+        ensure_dir(rfdiffusion_out_dir)
+        ensure_dir(proteinmpnn_out_dir)
         
         candidates_dir = project_root / self.config['paths']['candidates']
         ensure_dir(candidates_dir)
@@ -64,20 +72,20 @@ class Phase2GenerativeDesign:
         # Step 1: Generate de novo backbones
         logger.info("\nStep 1: RFdiffusion de novo generation")
         logger.info("-" * 80)
-        backbones = self._generate_denovo_backbones(state, run_dir)
-        logger.info(f"✓ Generated {len(backbones)} de novo backbones")
+        backbones = self._generate_denovo_backbones(state, rfdiffusion_out_dir)
+        logger.info(f"Generated {len(backbones)} de novo backbones")
         
         # Step 2: (Optional) Refinement
         logger.info("\nStep 2: RFdiffusion refinement")
         logger.info("-" * 80)
-        refined_backbones = self._refine_backbones(backbones, run_dir, state)
-        logger.info(f"✓ Refined {len(refined_backbones)} backbones")
+        refined_backbones = self._refine_backbones(backbones, rfdiffusion_out_dir, state)
+        logger.info(f"Refined {len(refined_backbones)} backbones")
         
         # Step 3: Sequence design with ProteinMPNN
         logger.info("\nStep 3: ProteinMPNN sequence design")
         logger.info("-" * 80)
-        candidates = self._design_sequences(refined_backbones, run_dir, state, candidates_dir)
-        logger.info(f"✓ Generated {len(candidates)} sequence candidates")
+        candidates = self._design_sequences(refined_backbones, proteinmpnn_out_dir, state, candidates_dir)
+        logger.info(f"Generated {len(candidates)} sequence candidates")
         
         # Limit candidates
         max_candidates = self.phase_config.get('max_candidates_per_target', 100)
@@ -96,29 +104,31 @@ class Phase2GenerativeDesign:
         
         return state
     
-    def _generate_denovo_backbones(self, state: PipelineState, run_dir: Path) -> List[Path]:
+    def _generate_denovo_backbones(self, state: PipelineState, tool_out_dir: Path) -> List[Path]:
         """Generate de novo backbones with RFdiffusion"""
         target_pdb = Path(state.target.target_pdb_path)
         target_chain = state.target.chain_id
         hotspot_residues = state.target.hotspot_residues
         
-        denovo_dir = run_dir / "denovo"
+        denovo_dir = tool_out_dir / "denovo"
         ensure_dir(denovo_dir)
         
         num_designs = self.phase_config['rfdiffusion']['num_designs']
         T = self.phase_config['rfdiffusion']['de_novo_T']
-        binder_length = self.phase_config['rfdiffusion'].get('binder_length', '70-100')
+        target_residues = self.phase_config['rfdiffusion'].get('target_residues', '')
+        binder_length = self.phase_config['rfdiffusion'].get('binder_length', '')
         noise_scale = self.phase_config['rfdiffusion'].get('noise_scale', 0.0)
-        
-        # Determine target residues range (simplified - use all for now)
-        # In practice, you should crop the target around the binding site
-        target_residues = "1-150"  # TODO: Calculate from PDB file
+        output_prefix = self.phase_config['rfdiffusion'].get('output_prefix', 'binder')
+
+        # If user did not provide these, do not pass them to RFdiffusion.
+        target_residues = target_residues if str(target_residues).strip() else None
+        binder_length = binder_length if str(binder_length).strip() else None
         
         logger.info(f"Target: {target_pdb}")
         logger.info(f"Target chain: {target_chain}")
-        logger.info(f"Target residues: {target_residues}")
+        logger.info(f"Target residues: {target_residues if target_residues else '(Hydra default)'}")
         logger.info(f"Hotspots: {hotspot_residues}")
-        logger.info(f"Binder length: {binder_length}")
+        logger.info(f"Binder length: {binder_length if binder_length else '(Hydra default)'}")
         logger.info(f"Generating {num_designs} designs with T={T}, noise={noise_scale}")
         
         start_time = datetime.now()
@@ -133,7 +143,8 @@ class Phase2GenerativeDesign:
                 output_dir=denovo_dir,
                 num_designs=num_designs,
                 T=T,
-                noise_scale=noise_scale
+                noise_scale=noise_scale,
+                output_prefix=output_prefix
             )
             
             # Record execution
@@ -146,7 +157,8 @@ class Phase2GenerativeDesign:
                     "target_chain": target_chain,
                     "target_residues": target_residues,
                     "hotspots": hotspot_residues,
-                    "binder_length": binder_length
+                    "binder_length": binder_length,
+                    "output_prefix": output_prefix
                 },
                 outputs={"backbones": [str(b) for b in backbones]},
                 start_time=start_time.isoformat(),
@@ -161,10 +173,10 @@ class Phase2GenerativeDesign:
             logger.error(f"RFdiffusion generation failed: {str(e)}")
             raise
     
-    def _refine_backbones(self, backbones: List[Path], run_dir: Path, 
+    def _refine_backbones(self, backbones: List[Path], tool_out_dir: Path, 
                          state: PipelineState) -> List[Path]:
         """Refine backbones with RFdiffusion"""
-        refine_dir = run_dir / "refinement"
+        refine_dir = tool_out_dir / "refinement"
         ensure_dir(refine_dir)
         
         T = self.phase_config['rfdiffusion']['refinement_T']
@@ -198,14 +210,18 @@ class Phase2GenerativeDesign:
         
         return refined
     
-    def _design_sequences(self, backbones: List[Path], run_dir: Path,
+    def _design_sequences(self, backbones: List[Path], tool_out_dir: Path,
                          state: PipelineState, candidates_dir: Path) -> List[DesignCandidate]:
         """Design sequences with ProteinMPNN"""
-        mpnn_dir = run_dir / "mpnn"
+        mpnn_dir = tool_out_dir / "mpnn"
         ensure_dir(mpnn_dir)
         
         num_seq_per_target = self.phase_config['proteinmpnn']['num_seq_per_target']
         temps = self.phase_config['proteinmpnn']['sampling_temps']
+        batch_size = self.phase_config['proteinmpnn'].get('batch_size', 1)
+        seed = self.phase_config['proteinmpnn'].get('seed', 37)
+        design_chains = self.phase_config['proteinmpnn'].get('design_chains', 'B')
+        fixed_positions_jsonl = self.phase_config['proteinmpnn'].get('fixed_positions_jsonl', '')
         
         candidates = []
         
@@ -220,7 +236,11 @@ class Phase2GenerativeDesign:
                     backbone_pdb=backbone,
                     output_dir=backbone_dir,
                     num_seqs=num_seq_per_target,
-                    temps=temps
+                    temps=temps,
+                    batch_size=batch_size,
+                    seed=seed,
+                    design_chains=design_chains,
+                    fixed_positions_jsonl=(Path(fixed_positions_jsonl) if fixed_positions_jsonl else None)
                 )
                 
                 # Create candidate for each sequence
@@ -245,3 +265,4 @@ class Phase2GenerativeDesign:
                 continue
         
         return candidates
+

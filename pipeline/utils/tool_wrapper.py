@@ -71,10 +71,11 @@ class RFdiffusionRunner(ToolRunner):
         super().__init__("RFdiffusion", tool_path, dry_run)
     
     def generate_binder(self, target_pdb: Path, target_chain: str,
-                       target_residues: str, hotspot_residues: List[int],
-                       binder_length: str, output_dir: Path, 
-                       num_designs: int = 10, T: int = 50,
-                       noise_scale: float = 0.0) -> List[Path]:
+                       target_residues: Optional[str], hotspot_residues: List[int],
+                       binder_length: Optional[str], output_dir: Path, 
+                       num_designs: int = 2, T: int = 50,
+                       noise_scale: float = 0.0,
+                       output_prefix: str = "binder") -> List[Path]:
         """
         Run de novo binder generation
         
@@ -94,25 +95,24 @@ class RFdiffusionRunner(ToolRunner):
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Format hotspot residues: [A30,A33,A34,...]
-        hotspot_str = ",".join([f"{target_chain}{r}" for r in hotspot_residues])
-        
-        # Format contigs: [A1-150/0 70-100]
-        # Target residues, chain break, binder length
-        contig_str = f"'{target_chain}{target_residues}/0 {binder_length}'"
+        # Format optional fields only when provided.
+        hotspot_str = ",".join([f"{target_chain}{r}" for r in hotspot_residues]) if hotspot_residues else ""
         
         command = [
             "python",
             str(self.tool_path / "scripts/run_inference.py"),
             f"inference.input_pdb={target_pdb}",
-            f"inference.output_prefix={output_dir}/design",
+            f"inference.output_prefix={output_dir}/{output_prefix}",
             f"inference.num_designs={num_designs}",
-            f"'contigmap.contigs=[{contig_str}]'",
-            f"'ppi.hotspot_res=[{hotspot_str}]'",
             f"diffuser.T={T}",
             f"denoiser.noise_scale_ca={noise_scale}",
             f"denoiser.noise_scale_frame={noise_scale}"
         ]
+        if target_residues and binder_length:
+            contig_str = f"{target_chain}{target_residues}/0 {binder_length}"
+            command.append(f"contigmap.contigs=[{contig_str}]")
+        if hotspot_str:
+            command.append(f"ppi.hotspot_res=[{hotspot_str}]")
         
         # Remove quotes for actual execution (shell handles them)
         command_str = " ".join(command)
@@ -124,12 +124,12 @@ class RFdiffusionRunner(ToolRunner):
         if exit_code != 0:
             raise RuntimeError(f"RFdiffusion failed: {stderr}")
         
-        # Find generated PDB files (pattern: design_0.pdb, design_1.pdb, ...)
-        output_files = sorted(output_dir.glob("design_*.pdb"))
+        # Find generated PDB files (pattern: binder_0.pdb, binder_1.pdb, ...)
+        output_files = sorted(output_dir.glob(f"{output_prefix}_*.pdb"))
         return output_files
     
     def generate_denovo(self, target_pdb: Path, hotspot_residues: List[int],
-                       output_dir: Path, num_designs: int = 10, 
+                       output_dir: Path, num_designs: int = 2, 
                        T: int = 50) -> List[Path]:
         """
         Legacy method - wrapper around generate_binder
@@ -141,11 +141,12 @@ class RFdiffusionRunner(ToolRunner):
             target_chain='A',
             target_residues='1-150',
             hotspot_residues=hotspot_residues,
-            binder_length='70-100',
+            binder_length='80-80',
             output_dir=output_dir,
             num_designs=num_designs,
             T=T,
-            noise_scale=0.0
+            noise_scale=0.0,
+            output_prefix="binder"
         )
     
     def refine(self, input_pdb: Path, output_dir: Path, T: int = 15) -> Path:
@@ -181,50 +182,107 @@ class RFdiffusionRunner(ToolRunner):
 
 class ProteinMPNNRunner(ToolRunner):
     """ProteinMPNN tool wrapper"""
-    
+
     def __init__(self, tool_path: str, dry_run: bool = False):
         super().__init__("ProteinMPNN", tool_path, dry_run)
-    
-    def design_sequence(self, backbone_pdb: Path, output_dir: Path,
-                       num_seqs: int = 10, temps: List[float] = [0.1, 0.2, 0.3]) -> List[str]:
-        """Design sequences for backbone"""
+
+    def design_sequence(
+        self,
+        backbone_pdb: Path,
+        output_dir: Path,
+        num_seqs: int = 8,
+        temps: List[float] = [0.1, 0.2],
+        batch_size: int = 1,
+        seed: int = 37,
+        design_chains: str = "B",
+        fixed_positions_jsonl: Optional[Path] = None,
+    ) -> List[str]:
+        """Design sequences for backbone using parsed jsonl inputs."""
+        import json
+        import shutil
+
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        temp_str = ",".join(str(t) for t in temps)
-        
+
+        # Prepare a single-PDB input directory for helper scripts.
+        input_dir = output_dir / "input_pdb"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        input_pdb = input_dir / backbone_pdb.name
+        if input_pdb.resolve() != backbone_pdb.resolve():
+            shutil.copy2(backbone_pdb, input_pdb)
+
+        parsed_jsonl = output_dir / "parsed_pdbs.jsonl"
+        assigned_jsonl = output_dir / "assigned_pdbs.jsonl"
+        default_fixed_jsonl = output_dir / "fixed_positions.jsonl"
+
+        parse_cmd = [
+            "python",
+            str(self.tool_path / "helper_scripts/parse_multiple_chains.py"),
+            f"--input_path={input_dir}",
+            f"--output_path={parsed_jsonl}",
+        ]
+        exit_code, _, stderr = self.run(parse_cmd, cwd=self.tool_path)
+        if exit_code != 0:
+            raise RuntimeError(f"ProteinMPNN parse_multiple_chains failed: {stderr}")
+
+        assign_cmd = [
+            "python",
+            str(self.tool_path / "helper_scripts/assign_fixed_chains.py"),
+            f"--input_path={parsed_jsonl}",
+            f"--output_path={assigned_jsonl}",
+            f"--chain_list={design_chains}",
+        ]
+        exit_code, _, stderr = self.run(assign_cmd, cwd=self.tool_path)
+        if exit_code != 0:
+            raise RuntimeError(f"ProteinMPNN assign_fixed_chains failed: {stderr}")
+
+        fixed_jsonl_path = Path(fixed_positions_jsonl) if fixed_positions_jsonl else default_fixed_jsonl
+        if not fixed_jsonl_path.exists():
+            with open(parsed_jsonl, "r") as f:
+                records = [json.loads(line) for line in f if line.strip()]
+            fixed_dict: Dict[str, Dict[str, List[int]]] = {}
+            for rec in records:
+                all_chain_list = [k[-1:] for k in rec.keys() if k.startswith("seq_chain")]
+                fixed_dict[rec["name"]] = {chain: [] for chain in all_chain_list}
+            with open(fixed_jsonl_path, "w") as f:
+                f.write(json.dumps(fixed_dict) + "\n")
+
+        temp_str = " ".join(str(t) for t in temps)
         command = [
             "python",
             str(self.tool_path / "protein_mpnn_run.py"),
-            f"--pdb_path={backbone_pdb}",
+            f"--jsonl_path={parsed_jsonl}",
+            f"--chain_id_jsonl={assigned_jsonl}",
+            f"--fixed_positions_jsonl={fixed_jsonl_path}",
             f"--out_folder={output_dir}",
             f"--num_seq_per_target={num_seqs}",
-            f"--sampling_temp={temp_str}"
+            f"--sampling_temp={temp_str}",
+            f"--seed={seed}",
+            f"--batch_size={batch_size}",
         ]
-        
+
         exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
-        
+
         if exit_code != 0:
             raise RuntimeError(f"ProteinMPNN failed: {stderr}")
-        
-        # Parse sequences from output
+
+        # Parse sequences from output.
         sequences = self._parse_mpnn_output(output_dir)
         return sequences
-    
+
     def _parse_mpnn_output(self, output_dir: Path) -> List[str]:
-        """Parse ProteinMPNN output FASTA files"""
+        """Parse ProteinMPNN output FASTA files."""
         sequences = []
-        fasta_files = list(output_dir.glob("*.fa"))
-        
+        seq_dir = output_dir / "seqs"
+        fasta_files = list(seq_dir.glob("*.fa")) if seq_dir.exists() else list(output_dir.glob("*.fa"))
+
         for fasta_file in fasta_files:
             with open(fasta_file) as f:
-                lines = f.readlines()
-                for i in range(0, len(lines), 2):
-                    if i + 1 < len(lines):
-                        seq = lines[i + 1].strip()
-                        sequences.append(seq)
-        
-        return sequences
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith(">"):
+                        sequences.append(line)
 
+        return sequences
 
 class ChaiRunner(ToolRunner):
     """Chai-1 tool wrapper"""
@@ -260,3 +318,4 @@ class ChaiRunner(ToolRunner):
         """Parse confidence metrics from Chai output"""
         # Placeholder - actual implementation depends on Chai output format
         return {"chai_confidence": 0.8}
+
