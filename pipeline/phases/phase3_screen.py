@@ -49,14 +49,17 @@ class Phase3ScreeningAndValidation:
         
         # Setup directories
         project_root = Path(self.config['project_root'])
-        run_dir = project_root / self.config['paths']['runs'] / state.run_id
+        now = datetime.now()
+        date_dir = now.strftime("%Y-%m-%d")
+        time_dir = now.strftime("%H-%M-%S")
+        outputs_root = project_root / self.config['paths']['outputs']
         
         # Phase 3-A: Fast screening
         logger.info("\n" + "=" * 80)
         logger.info("PHASE 3-A: Fast Screening")
         logger.info("=" * 80)
         
-        fast_dir = run_dir / "phase3_fast"
+        fast_dir = outputs_root / "chai" / date_dir / time_dir / "phase3_fast"
         ensure_dir(fast_dir)
         
         generated_candidates = state.get_candidates_by_stage("generated")
@@ -80,7 +83,7 @@ class Phase3ScreeningAndValidation:
         logger.info("PHASE 3-B: Deep Validation")
         logger.info("=" * 80)
         
-        deep_dir = run_dir / "phase3_deep"
+        deep_dir = outputs_root / "colabfold" / date_dir / time_dir / "phase3_deep"
         ensure_dir(deep_dir)
         
         logger.info(f"Deep validating {len(passed)} candidates")

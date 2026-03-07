@@ -3,8 +3,8 @@ Phase 1: Human-in-the-Loop Target Discovery
 """
 from pathlib import Path
 from typing import List, Optional
-import logging
-
+import logging 
+from datetime import datetime
 from ..models import TargetSpec, PipelineState
 from ..utils.validation import validate_pdb_file, validate_hotspot_residues
 
@@ -52,17 +52,23 @@ class Phase1TargetDiscovery:
         
         # Generate target ID
         target_id = f"T{state.run_id.replace('-', '').replace('_', '')[:10]}"
-        
-        # Create target directory
+        now = datetime.now()
+        date_dir = now.strftime("%Y-%m-%d")
+        time_dir = now.strftime("%H-%M-%S")
+
         project_root = Path(self.config['project_root'])
+
+        # Normalize initial input under inputs/pdb/YYYY-MM-DD/HH-MM-SS/
+        inputs_pdb_dir = project_root / self.config['paths']['inputs_pdb'] / date_dir / time_dir
+        inputs_pdb_dir.mkdir(parents=True, exist_ok=True)
+        normalized_target_pdb = inputs_pdb_dir / target_pdb.name
+        import shutil
+        shutil.copy2(target_pdb, normalized_target_pdb)
+
+        # Create target metadata directory
         target_dir = project_root / self.config['paths']['targets'] / target_id
         target_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Copy target PDB to target directory
-        target_pdb_copy = target_dir / "target.pdb"
-        import shutil
-        shutil.copy2(target_pdb, target_pdb_copy)
-        
+
         # Default pocket definition
         if pocket_definition is None:
             pocket_definition = {
@@ -73,7 +79,7 @@ class Phase1TargetDiscovery:
         # Create TargetSpec
         target_spec = TargetSpec(
             target_id=target_id,
-            target_pdb_path=str(target_pdb_copy),
+            target_pdb_path=str(normalized_target_pdb),
             chain_id=chain_id,
             pocket_definition=pocket_definition,
             hotspot_residues=hotspot_residues,
@@ -86,12 +92,12 @@ class Phase1TargetDiscovery:
         # Update state
         state.target = target_spec
         state.current_phase = "phase2"
-        
-        logger.info(f"✓ Target ID: {target_id}")
-        logger.info(f"✓ Target PDB: {target_pdb_copy}")
-        logger.info(f"✓ Chain: {chain_id}")
-        logger.info(f"✓ Hotspot residues: {hotspot_residues}")
-        logger.info(f"✓ Target spec saved to: {target_dir / 'hotspot.json'}")
+
+        logger.info(f"Target ID: {target_id}")
+        logger.info(f"Target PDB: {normalized_target_pdb}")
+        logger.info(f"Chain: {chain_id}")
+        logger.info(f"Hotspot residues: {hotspot_residues}")
+        logger.info(f"Target spec saved to: {target_dir / 'hotspot.json'}")
         logger.info("")
         
         return state

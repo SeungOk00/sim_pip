@@ -42,7 +42,10 @@ class Phase5LabAutomation:
         
         # Setup directories
         project_root = Path(self.config['project_root'])
-        run_dir = project_root / self.config['paths']['runs'] / state.run_id / "phase5_lab"
+        now = datetime.now()
+        date_dir = now.strftime("%Y-%m-%d")
+        time_dir = now.strftime("%H-%M-%S")
+        run_dir = project_root / self.config['paths']['outputs'] / "lab" / date_dir / time_dir / "phase5_lab"
         ensure_dir(run_dir)
         
         # Get final candidates
