@@ -19,7 +19,7 @@ class ToolRunner:
         self.dry_run = dry_run
     
     def run(self, command: List[str], cwd: Optional[Path] = None, 
-            retry_count: int = 2) -> Tuple[int, str, str]:
+            retry_count: int = 2, env: Optional[Dict] = None) -> Tuple[int, str, str]:
         """
         Run command with retry logic
         
@@ -33,6 +33,12 @@ class ToolRunner:
             logger.info("[DRY RUN] Would execute command")
             return 0, "", ""
         
+        # Setup environment
+        import os
+        run_env = os.environ.copy()
+        if env:
+            run_env.update(env)
+        
         for attempt in range(retry_count + 1):
             try:
                 result = subprocess.run(
@@ -40,7 +46,8 @@ class ToolRunner:
                     cwd=cwd,
                     capture_output=True,
                     text=True,
-                    timeout=3600  # 1 hour timeout
+                    timeout=3600,  # 1 hour timeout
+                    env=run_env
                 )
                 
                 if result.returncode == 0:
@@ -119,7 +126,14 @@ class RFdiffusionRunner(ToolRunner):
         
         logger.info(f"RFdiffusion command: {command_str}")
         
-        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
+        # Add parent directory and SE3Transformer to PYTHONPATH for imports
+        import os
+        se3_path = self.tool_path / "env/SE3Transformer"
+        env = {
+            'PYTHONPATH': f"{self.tool_path.parent}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
+        }
+        
+        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path, env=env)
         
         if exit_code != 0:
             raise RuntimeError(f"RFdiffusion failed: {stderr}")

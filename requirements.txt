@@ -9,3 +9,6 @@ dgl -f https://data.dgl.ai/wheels/torch-2.2/cu121/repo.html
 torchdata<0.8.0
 e3nn
 torch==2.2.1
+## sim_tool
+chai_lab==0.6.1
+boltz[cuda] -U

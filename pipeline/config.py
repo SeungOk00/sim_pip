@@ -23,18 +23,18 @@ DEFAULT_CONFIG = {
     # Phase 2: Generation
     "phase2": {
         "rfdiffusion": {
-            "path": "/home01/hpc194a02/test/sim_pip/RFdiffusion",
+            "path": "/home01/hpc194a02/test/sim_pip/rfdiffusion",
             "de_novo_T": 50,
             "refinement_T": 15,
             "num_designs": 2,
-            "target_residues": "",
-            "binder_length": "",
+            "target_residues": "982-999",
+            "binder_length": "80-80",
             "noise_scale": 0.0,
             "output_prefix": "binder",
             "max_refinement_iterations": 3
         },
         "proteinmpnn": {
-            "path": "/home01/hpc194a02/test/sim_pip/ProteinMPNN",
+            "path": "/home01/hpc194a02/test/sim_pip/proteinmpnn",
             "num_seq_per_target": 8,
             "sampling_temps": [0.1, 0.2],
             "batch_size": 1,
