@@ -1,0 +1,23 @@
+****************************************************************
+*                DockQ-CAPRI peptide                           *
+*   Do not trust any thing you read....                        *
+*   OBS THE DEFINITION OF Fnat and iRMS are different for      *
+*   peptides in CAPRI                                          *
+*                                                              *
+*   Ref: S. Basu and B. Wallner, DockQ: A quality measure for  *
+*   protein-protein docking models                             *
+*                            doi:10.1371/journal.pone.0161879  *
+*   For comments, please email: bjorn.wallner@.liu.se          *
+****************************************************************
+Model  : examples/6qwn-assembly1.cif.gz
+Native : examples/6qwn-assembly2.cif.gz
+Total DockQ-capri_peptide over 1 native interfaces: 0.872 with AF:BG model:native mapping
+Native chains: B, G
+	Model chains: A, F
+	DockQ: 0.872
+	iRMSD: 0.588
+	LRMSD: 0.982
+	fnat: 0.762
+	fnonnat: 0.158
+	F1: 0.800
+	clashes: 0
