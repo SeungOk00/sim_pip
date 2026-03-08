@@ -47,15 +47,21 @@ DEFAULT_CONFIG = {
     # Phase 3-A: Fast Screening
     "phase3_fast": {
         "chai": {
-            "path": "/home01/hpc194a02/test/sim_pip/chai-lab"
+            "path": "",
+            "command_template": "python -m chai_lab.run --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
+            "output_file": "predicted_complex.pdb"
         },
         "boltz": {
-            "enabled": False  # Optional tool
+            "enabled": True,
+            "path": "",
+            "command_template": "boltz predict --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
+            "output_file": "predicted_complex.pdb"
         },
         "gates": {
-            "fail_threshold": 0.23,
-            "refine_threshold": 0.49,
-            "pass_threshold": 0.49
+            "consensus_pass_dockq": 0.49,
+            "consensus_refine_dockq": 0.23,
+            "single_model_pass_conf": 0.7,
+            "single_model_refine_conf": 0.5
         }
     },
     

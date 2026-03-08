@@ -2,6 +2,7 @@
 Tool wrapper utilities
 """
 import subprocess
+import shlex
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
@@ -304,26 +305,42 @@ class ChaiRunner(ToolRunner):
     def __init__(self, tool_path: str, dry_run: bool = False):
         super().__init__("Chai-1", tool_path, dry_run)
     
-    def predict_complex(self, target_pdb: Path, binder_fasta: Path,
-                       output_dir: Path) -> Tuple[Path, Dict[str, float]]:
+    def predict_complex(
+        self,
+        target_pdb: Path,
+        binder_fasta: Path,
+        output_dir: Path,
+        command_template: Optional[str] = None,
+        output_file: str = "predicted_complex.pdb",
+    ) -> Tuple[Path, Dict[str, float]]:
         """Predict complex structure"""
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        command = [
-            "python",
-            str(self.tool_path / "chai_lab/run.py"),
-            f"--target={target_pdb}",
-            f"--binder={binder_fasta}",
-            f"--output_dir={output_dir}"
-        ]
-        
-        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
-        
-        if exit_code != 0:
-            raise RuntimeError(f"Chai-1 failed: {stderr}")
-        
+
+        commands = []
+        if command_template:
+            commands.append(shlex.split(command_template.format(
+                target_pdb=target_pdb,
+                binder_fasta=binder_fasta,
+                output_dir=output_dir,
+            )))
+        # pip/module/common fallbacks
+        commands.extend([
+            ["python", "-m", "chai_lab.run", f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
+            ["chai", "run", f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
+            ["python", str(self.tool_path / "chai_lab/run.py"), f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
+        ])
+
+        last_err = ""
+        for command in commands:
+            exit_code, stdout, stderr = self.run(command, cwd=self.tool_path if str(self.tool_path) else None)
+            if exit_code == 0:
+                break
+            last_err = stderr
+        else:
+            raise RuntimeError(f"Chai-1 failed: {last_err}")
+
         # Find output files
-        complex_pdb = output_dir / "predicted_complex.pdb"
+        complex_pdb = output_dir / output_file
         confidence_metrics = self._parse_confidence(output_dir)
         
         return complex_pdb, confidence_metrics
@@ -332,4 +349,41 @@ class ChaiRunner(ToolRunner):
         """Parse confidence metrics from Chai output"""
         # Placeholder - actual implementation depends on Chai output format
         return {"chai_confidence": 0.8}
+
+
+class BoltzRunner(ToolRunner):
+    """Boltz tool wrapper"""
+
+    def __init__(self, tool_path: str, dry_run: bool = False):
+        super().__init__("Boltz", tool_path, dry_run)
+
+    def predict_complex(
+        self,
+        target_pdb: Path,
+        binder_fasta: Path,
+        output_dir: Path,
+        command_template: str,
+        output_file: str = "predicted_complex.pdb",
+    ) -> Tuple[Path, Dict[str, float]]:
+        """Predict complex structure with Boltz."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cmd = command_template.format(
+            target_pdb=target_pdb,
+            binder_fasta=binder_fasta,
+            output_dir=output_dir,
+        )
+        command = shlex.split(cmd)
+
+        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
+        if exit_code != 0:
+            raise RuntimeError(f"Boltz failed: {stderr}")
+
+        complex_pdb = output_dir / output_file
+        confidence_metrics = self._parse_confidence(output_dir)
+        return complex_pdb, confidence_metrics
+
+    def _parse_confidence(self, output_dir: Path) -> Dict[str, float]:
+        """Parse confidence metrics from Boltz output."""
+        # Placeholder - actual implementation depends on Boltz output format.
+        return {"boltz_confidence": 0.8}
 
