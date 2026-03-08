@@ -53,10 +53,15 @@ def setup_logging(log_level: str = "INFO", log_file: Path = None):
 
 def run_pipeline(config: Config, args):
     """Execute the complete pipeline"""
-    
-    # Initialize state
-    run_id = get_run_id()
-    state = PipelineState(run_id=run_id, config=config.to_dict())
+    # Initialize or resume state
+    if args.resume:
+        state_file = Path(args.resume)
+        state = PipelineState.load(state_file)
+        state.config = config.to_dict()
+        run_id = state.run_id
+    else:
+        run_id = get_run_id()
+        state = PipelineState(run_id=run_id, config=config.to_dict())
     
     # Setup run directory
     project_root = Path(config.get('project_root'))
@@ -83,6 +88,16 @@ def run_pipeline(config: Config, args):
     try:
         # Determine starting phase
         start_phase = args.start_phase if hasattr(args, 'start_phase') else 1
+        if args.resume and start_phase == 1:
+            phase_to_num = {
+                "phase1": 1,
+                "phase2": 2,
+                "phase3_fast": 3,
+                "phase3_deep": 3,
+                "phase4": 4,
+                "phase5": 5,
+            }
+            start_phase = phase_to_num.get(state.current_phase, 1)
         
         # Phase 1: Target Discovery
         if start_phase <= 1:
