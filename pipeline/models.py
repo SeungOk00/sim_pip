@@ -45,6 +45,7 @@ class DesignCandidate:
     parent_id: Optional[str] = None
     binder_sequence: str = ""
     binder_pdb_path: str = ""
+    binder_fasta_path: str = ""
     complex_pdb_path: str = ""
     stage: str = "generated"  # generated/refined/fast_screened/deep_validated/optimized/selected/failed
     metrics: Dict[str, float] = field(default_factory=dict)

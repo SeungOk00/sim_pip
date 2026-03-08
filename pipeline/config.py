@@ -48,14 +48,14 @@ DEFAULT_CONFIG = {
     "phase3_fast": {
         "chai": {
             "path": "",
-            "command_template": "python -m chai_lab.run --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
-            "output_file": "predicted_complex.pdb"
+            "command_template": "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",
+            "output_file": ""
         },
         "boltz": {
             "enabled": True,
             "path": "",
-            "command_template": "boltz predict --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
-            "output_file": "predicted_complex.pdb"
+            "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
+            "output_file": ""
         },
         "gates": {
             "consensus_pass_dockq": 0.49,

@@ -244,7 +244,7 @@ class Phase2GenerativeDesign:
                 )
                 
                 # Create candidate for each sequence
-                for j, sequence in enumerate(sequences):
+                for j, (sequence, source_fasta) in enumerate(sequences):
                     candidate_id = get_next_candidate_id(candidates_dir)
                     
                     candidate = DesignCandidate(
@@ -252,6 +252,7 @@ class Phase2GenerativeDesign:
                         parent_id=None,
                         binder_sequence=sequence,
                         binder_pdb_path=str(backbone),
+                        binder_fasta_path=str(source_fasta),
                         stage="generated",
                         lineage=[f"denovo_backbone_{i}", f"mpnn_seq_{j}"]
                     )

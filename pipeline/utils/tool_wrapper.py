@@ -211,7 +211,7 @@ class ProteinMPNNRunner(ToolRunner):
         seed: int = 37,
         design_chains: str = "B",
         fixed_positions_jsonl: Optional[Path] = None,
-    ) -> List[str]:
+    ) -> List[Tuple[str, Path]]:
         """Design sequences for backbone using parsed jsonl inputs."""
         import json
         import shutil
@@ -284,9 +284,9 @@ class ProteinMPNNRunner(ToolRunner):
         sequences = self._parse_mpnn_output(output_dir)
         return sequences
 
-    def _parse_mpnn_output(self, output_dir: Path) -> List[str]:
+    def _parse_mpnn_output(self, output_dir: Path) -> List[Tuple[str, Path]]:
         """Parse ProteinMPNN output FASTA files."""
-        sequences = []
+        sequences: List[Tuple[str, Path]] = []
         seq_dir = output_dir / "seqs"
         fasta_files = list(seq_dir.glob("*.fa")) if seq_dir.exists() else list(output_dir.glob("*.fa"))
 
@@ -295,7 +295,7 @@ class ProteinMPNNRunner(ToolRunner):
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith(">"):
-                        sequences.append(line)
+                        sequences.append((line, fasta_file))
 
         return sequences
 
@@ -311,23 +311,25 @@ class ChaiRunner(ToolRunner):
         binder_fasta: Path,
         output_dir: Path,
         command_template: Optional[str] = None,
+        input_path: Optional[Path] = None,
         output_file: str = "predicted_complex.pdb",
     ) -> Tuple[Path, Dict[str, float]]:
         """Predict complex structure"""
         output_dir.mkdir(parents=True, exist_ok=True)
+        resolved_input = input_path if input_path is not None else binder_fasta
 
         commands = []
         if command_template:
             commands.append(shlex.split(command_template.format(
                 target_pdb=target_pdb,
                 binder_fasta=binder_fasta,
+                input_path=resolved_input,
                 output_dir=output_dir,
             )))
         # pip/module/common fallbacks
         commands.extend([
-            ["python", "-m", "chai_lab.run", f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
-            ["chai", "run", f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
-            ["python", str(self.tool_path / "chai_lab/run.py"), f"--target={target_pdb}", f"--binder={binder_fasta}", f"--output_dir={output_dir}"],
+            ["chai-lab", "fold", str(resolved_input), str(output_dir)],
+            ["python", "-m", "chai_lab.main", "fold", str(resolved_input), str(output_dir)],
         ])
 
         last_err = ""
@@ -340,10 +342,31 @@ class ChaiRunner(ToolRunner):
             raise RuntimeError(f"Chai-1 failed: {last_err}")
 
         # Find output files
-        complex_pdb = output_dir / output_file
+        complex_pdb = self._find_prediction_file(output_dir, output_file)
         confidence_metrics = self._parse_confidence(output_dir)
         
         return complex_pdb, confidence_metrics
+
+    def _find_prediction_file(self, output_dir: Path, output_file: str) -> Path:
+        if output_file:
+            explicit = output_dir / output_file
+            if explicit.exists():
+                return explicit
+
+        chai_cifs = sorted(output_dir.glob("pred.model_idx_*.cif"))
+        if chai_cifs:
+            return chai_cifs[0]
+        chai_pdbs = sorted(output_dir.glob("*.pdb"))
+        if chai_pdbs:
+            return chai_pdbs[0]
+
+        any_cif = sorted(output_dir.glob("**/*.cif"))
+        if any_cif:
+            return any_cif[0]
+        any_pdb = sorted(output_dir.glob("**/*.pdb"))
+        if any_pdb:
+            return any_pdb[0]
+        raise RuntimeError(f"Chai output structure not found under {output_dir}")
     
     def _parse_confidence(self, output_dir: Path) -> Dict[str, float]:
         """Parse confidence metrics from Chai output"""
@@ -363,6 +386,7 @@ class BoltzRunner(ToolRunner):
         binder_fasta: Path,
         output_dir: Path,
         command_template: str,
+        input_path: Optional[Path] = None,
         output_file: str = "predicted_complex.pdb",
     ) -> Tuple[Path, Dict[str, float]]:
         """Predict complex structure with Boltz."""
@@ -371,6 +395,7 @@ class BoltzRunner(ToolRunner):
             target_pdb=target_pdb,
             binder_fasta=binder_fasta,
             output_dir=output_dir,
+            input_path=(input_path if input_path is not None else binder_fasta),
         )
         command = shlex.split(cmd)
 
@@ -378,9 +403,34 @@ class BoltzRunner(ToolRunner):
         if exit_code != 0:
             raise RuntimeError(f"Boltz failed: {stderr}")
 
-        complex_pdb = output_dir / output_file
+        complex_pdb = self._find_prediction_file(output_dir, output_file)
         confidence_metrics = self._parse_confidence(output_dir)
         return complex_pdb, confidence_metrics
+
+    def _find_prediction_file(self, output_dir: Path, output_file: str) -> Path:
+        """Resolve Boltz output structure file from out_dir."""
+        if output_file:
+            explicit = output_dir / output_file
+            if explicit.exists():
+                return explicit
+
+        predictions_dir = output_dir / "predictions"
+        if predictions_dir.exists():
+            cif_files = sorted(predictions_dir.glob("**/*_model_*.cif"))
+            if cif_files:
+                return cif_files[0]
+            pdb_files = sorted(predictions_dir.glob("**/*.pdb"))
+            if pdb_files:
+                return pdb_files[0]
+
+        # Final fallback
+        any_cif = sorted(output_dir.glob("**/*.cif"))
+        if any_cif:
+            return any_cif[0]
+        any_pdb = sorted(output_dir.glob("**/*.pdb"))
+        if any_pdb:
+            return any_pdb[0]
+        raise RuntimeError(f"Boltz output structure not found under {output_dir}")
 
     def _parse_confidence(self, output_dir: Path) -> Dict[str, float]:
         """Parse confidence metrics from Boltz output."""

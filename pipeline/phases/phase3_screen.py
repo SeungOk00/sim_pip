@@ -2,7 +2,7 @@
 Phase 3: Fast Screening and Deep Validation
 """
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import logging
 from datetime import datetime
 import subprocess
@@ -90,23 +90,46 @@ class Phase3ScreeningAndValidation:
         cand_dir = run_dir / candidate.candidate_id
         ensure_dir(cand_dir)
 
-        fasta_path = cand_dir / "binder.fasta"
-        with open(fasta_path, "w") as f:
-            f.write(f">{candidate.candidate_id}\n{candidate.binder_sequence}\n")
-
         try:
-            target_pdb = Path(state.target.target_pdb_path)
+            target_pdb = self._resolve_rfdiffusion_pdb(candidate) or Path(state.target.target_pdb_path)
+            fasta_path = self._resolve_mpnn_fasta(candidate)
+
+            binder_sequence = candidate.binder_sequence
+            if (not binder_sequence) and fasta_path is not None:
+                binder_sequence = self._read_first_fasta_sequence(fasta_path)
+                candidate.binder_sequence = binder_sequence
+
+            if not binder_sequence:
+                raise ValueError(f"No binder sequence available for {candidate.candidate_id}")
+
+            if fasta_path is None:
+                fasta_path = cand_dir / "binder.fasta"
+                with open(fasta_path, "w") as f:
+                    f.write(f">{candidate.candidate_id}\n{binder_sequence}\n")
+            else:
+                candidate.binder_fasta_path = str(fasta_path)
+
+            logger.info(f"  target pdb: {target_pdb}")
+            logger.info(f"  binder fasta: {fasta_path}")
 
             chai_dir = cand_dir / "chai"
             chai_cfg = self.fast_config.get("chai", {})
+            chai_input = chai_dir / "chai_input.fasta"
+            self._write_chai_fasta_input(
+                target_pdb=target_pdb,
+                target_chain=state.target.chain_id,
+                binder_sequence=binder_sequence,
+                out_fasta=chai_input,
+            )
             chai_pdb, chai_conf = self.chai.predict_complex(
                 target_pdb=target_pdb,
                 binder_fasta=fasta_path,
                 output_dir=chai_dir,
                 command_template=chai_cfg.get(
                     "command_template",
-                    "python -m chai_lab.run --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
+                    "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",
                 ),
+                input_path=chai_input,
                 output_file=chai_cfg.get("output_file", "predicted_complex.pdb"),
             )
             candidate.metrics.update(chai_conf)
@@ -116,14 +139,22 @@ class Phase3ScreeningAndValidation:
             if self.boltz is not None:
                 boltz_cfg = self.fast_config.get("boltz", {})
                 boltz_dir = cand_dir / "boltz"
+                boltz_input = boltz_dir / "boltz_input.fasta"
+                self._write_boltz_fasta_input(
+                    target_pdb=target_pdb,
+                    target_chain=state.target.chain_id,
+                    binder_sequence=binder_sequence,
+                    out_fasta=boltz_input,
+                )
                 boltz_pdb, boltz_conf = self.boltz.predict_complex(
                     target_pdb=target_pdb,
                     binder_fasta=fasta_path,
                     output_dir=boltz_dir,
                     command_template=boltz_cfg.get(
                         "command_template",
-                        "boltz predict --target {target_pdb} --binder {binder_fasta} --output_dir {output_dir}",
+                        "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
                     ),
+                    input_path=boltz_input,
                     output_file=boltz_cfg.get("output_file", "predicted_complex.pdb"),
                 )
                 candidate.metrics.update(boltz_conf)
@@ -275,3 +306,131 @@ class Phase3ScreeningAndValidation:
 
         random.seed(hash(str(pdb)))
         return random.uniform(2.0, 8.0)
+
+    def _write_boltz_fasta_input(self, target_pdb: Path, target_chain: str, binder_sequence: str, out_fasta: Path):
+        """Write Boltz FASTA input (deprecated format but supported by Boltz)."""
+        out_fasta.parent.mkdir(parents=True, exist_ok=True)
+        target_seq = self._extract_chain_sequence_from_pdb(target_pdb, target_chain)
+        with open(out_fasta, "w") as f:
+            f.write(f">A|protein|empty\n{target_seq}\n")
+            f.write(f">B|protein|empty\n{binder_sequence}\n")
+
+    def _write_chai_fasta_input(self, target_pdb: Path, target_chain: str, binder_sequence: str, out_fasta: Path):
+        """Write Chai fold FASTA input with full target+binder complex sequences."""
+        out_fasta.parent.mkdir(parents=True, exist_ok=True)
+        target_seq = self._extract_chain_sequence_from_pdb(target_pdb, target_chain)
+        with open(out_fasta, "w") as f:
+            f.write(f">protein|name=target_chain_{target_chain}\n{target_seq}\n")
+            f.write(">protein|name=binder_chain_B\n")
+            f.write(f"{binder_sequence}\n")
+
+    def _extract_chain_sequence_from_pdb(self, pdb_path: Path, chain_id: str) -> str:
+        """Extract one-letter AA sequence from ATOM records of one chain."""
+        aa3_to_1 = {
+            "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
+            "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
+            "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F", "PRO": "P",
+            "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
+            "MSE": "M",
+        }
+        seq = []
+        seen = set()
+        with open(pdb_path, "r") as f:
+            for line in f:
+                if not line.startswith("ATOM"):
+                    continue
+                if len(line) < 27:
+                    continue
+                if line[21].strip() != chain_id:
+                    continue
+                resname = line[17:20].strip().upper()
+                resseq = line[22:26].strip()
+                icode = line[26].strip()
+                key = (resseq, icode)
+                if key in seen:
+                    continue
+                seen.add(key)
+                seq.append(aa3_to_1.get(resname, "X"))
+        if not seq:
+            raise ValueError(f"No residues found for chain '{chain_id}' in {pdb_path}")
+        return "".join(seq)
+
+    def _extract_backbone_index(self, candidate: DesignCandidate) -> Optional[int]:
+        for tag in candidate.lineage:
+            if tag.startswith("denovo_backbone_"):
+                try:
+                    return int(tag.split("_")[-1])
+                except ValueError:
+                    return None
+        return None
+
+    def _resolve_rfdiffusion_pdb(self, candidate: DesignCandidate) -> Optional[Path]:
+        project_root = Path(self.config["project_root"])
+        outputs_root = project_root / self.config["paths"]["outputs"]
+        idx = self._extract_backbone_index(candidate)
+        candidate_pdb = Path(candidate.binder_pdb_path) if candidate.binder_pdb_path else None
+
+        if idx is not None and candidate_pdb is not None:
+            parts = candidate_pdb.parts
+            if "rfdiffusion" in parts:
+                r = parts.index("rfdiffusion")
+                if len(parts) > r + 2:
+                    date_dir = parts[r + 1]
+                    time_dir = parts[r + 2]
+                    denovo_pdb = outputs_root / "rfdiffusion" / date_dir / time_dir / "denovo" / f"binder_{idx}.pdb"
+                    if denovo_pdb.exists():
+                        return denovo_pdb
+
+        if idx is not None:
+            matches = sorted(outputs_root.glob(f"rfdiffusion/*/*/denovo/binder_{idx}.pdb"))
+            if matches:
+                return matches[-1]
+
+        if candidate_pdb is not None and candidate_pdb.exists():
+            return candidate_pdb
+        return None
+
+    def _resolve_mpnn_fasta(self, candidate: DesignCandidate) -> Optional[Path]:
+        if candidate.binder_fasta_path:
+            p = Path(candidate.binder_fasta_path)
+            if p.exists():
+                return p
+
+        project_root = Path(self.config["project_root"])
+        outputs_root = project_root / self.config["paths"]["outputs"]
+        idx = self._extract_backbone_index(candidate)
+        if idx is None:
+            return None
+
+        candidate_pdb = Path(candidate.binder_pdb_path) if candidate.binder_pdb_path else None
+        if candidate_pdb is not None:
+            parts = candidate_pdb.parts
+            if "rfdiffusion" in parts:
+                r = parts.index("rfdiffusion")
+                if len(parts) > r + 2:
+                    date_dir = parts[r + 1]
+                    time_dir = parts[r + 2]
+                    seq_dir = outputs_root / "proteinmpnn" / date_dir / time_dir / "mpnn" / f"backbone_{idx:03d}" / "seqs"
+                    if seq_dir.exists():
+                        files = sorted(seq_dir.glob("*.fa"))
+                        if files:
+                            return files[0]
+
+        matches = sorted(outputs_root.glob(f"proteinmpnn/*/*/mpnn/backbone_{idx:03d}/seqs/*.fa"))
+        if matches:
+            return matches[-1]
+        return None
+
+    def _read_first_fasta_sequence(self, fasta_path: Path) -> str:
+        seq_lines: List[str] = []
+        with open(fasta_path, "r") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith(">"):
+                    if seq_lines:
+                        break
+                    continue
+                seq_lines.append(line)
+        return "".join(seq_lines)
