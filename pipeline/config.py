@@ -26,7 +26,7 @@ DEFAULT_CONFIG = {
             "path": "/home01/hpc194a02/test/sim_pip/rfdiffusion",
             "de_novo_T": 50,
             "refinement_T": 15,
-            "num_designs": 2,
+            "num_designs": 1,
             "target_residues": "982-999",
             "binder_length": "80-80",
             "noise_scale": 0.0,
@@ -35,14 +35,14 @@ DEFAULT_CONFIG = {
         },
         "proteinmpnn": {
             "path": "/home01/hpc194a02/test/sim_pip/proteinmpnn",
-            "num_seq_per_target": 8,
-            "sampling_temps": [0.1, 0.2],
+            "num_seq_per_target": 10,
+            "sampling_temps": [0.1],
             "batch_size": 1,
             "seed": 37,
             "design_chains": "B",
             "fixed_positions_jsonl": ""
         },
-        "max_candidates_per_target": 100
+        "max_candidates_per_target": 10
     },
     # Phase 3-A: Fast Screening
     "phase3_fast": {
@@ -52,9 +52,9 @@ DEFAULT_CONFIG = {
             "output_file": ""
         },
         "boltz": {
-            "enabled": False,
+            "enabled": True,
             "path": "",
-            "venv_path": "/home01/hpc194a02/test/boltz_venv",
+            "venv_path": "/home01/hpc194a02/test/sim_pip/.boltz_venv",
             "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
             "output_file": ""
         },
@@ -72,8 +72,10 @@ DEFAULT_CONFIG = {
             "path": "/home01/hpc194a02/test/sim_pip/ColabFold"
         },
         "gates": {
-            "rmsd_consensus_threshold": 2.0,
-            "pae_interaction_threshold": 5.0
+            "backbone_rmsd_threshold": 2.0,      # RFdiffusion 백본 vs ColabFold 바인더 RMSD
+            "interface_pae_threshold": 5.0,      # 타겟-바인더 interface PAE
+            "binder_plddt_threshold": 70.0,      # 바인더 평균 pLDDT
+            "iptm_threshold": 0.6                # Interface pTM score
         }
     },
     

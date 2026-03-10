@@ -158,8 +158,10 @@ class Phase3ScreeningAndValidation:
             boltz_pdb = None
             if self.boltz is not None:
                 boltz_cfg = self.fast_config.get("boltz", {})
-                boltz_dir = cand_dir / "boltz"
-                boltz_input = boltz_dir / "boltz_input.fasta"
+                # Boltz output directory (similar to Chai structure)
+                boltz_output_dir = project_root / "outputs" / "boltz" / date_dir / unique_id / candidate.candidate_id
+                ensure_dir(boltz_output_dir)
+                boltz_input = boltz_output_dir / "boltz_input.fasta"
                 self._write_boltz_fasta_input(
                     target_pdb=target_pdb,
                     target_chain=state.target.chain_id,
@@ -169,7 +171,7 @@ class Phase3ScreeningAndValidation:
                 boltz_pdb, boltz_conf = self.boltz.predict_complex(
                     target_pdb=target_pdb,
                     binder_fasta=fasta_path,
-                    output_dir=boltz_dir,
+                    output_dir=boltz_output_dir,
                     command_template=boltz_cfg.get(
                         "command_template",
                         "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
@@ -230,26 +232,53 @@ class Phase3ScreeningAndValidation:
 
         try:
             colabfold_pdb = self._run_colabfold(candidate, cand_dir)
-            chai_pdb = Path(candidate.complex_pdb_path)
-            rmsd = self._calculate_rmsd(chai_pdb, colabfold_pdb)
-            candidate.metrics["rmsd_chai_vs_cf"] = rmsd
-
-            pae = self._calculate_pae_interaction(colabfold_pdb)
-            candidate.metrics["pae_interaction"] = pae
-
-            gates = self.deep_config["gates"]
-            if rmsd >= gates["rmsd_consensus_threshold"]:
-                candidate.decision = {"gate": "FAIL_consensus", "reason": f"RMSD {rmsd:.2f} >= {gates['rmsd_consensus_threshold']}"}
-                candidate.stage = "failed"
-                logger.info(f"  FAIL - Poor consensus (RMSD: {rmsd:.2f})")
-            elif pae >= gates["pae_interaction_threshold"]:
-                candidate.decision = {"gate": "FAIL_pae", "reason": f"pAE {pae:.2f} >= {gates['pae_interaction_threshold']}"}
-                candidate.stage = "failed"
-                logger.info(f"  FAIL - Low confidence (pAE: {pae:.2f})")
+            
+            # 1. RFdiffusion 백본 vs ColabFold 바인더 RMSD
+            rfdiff_backbone = self._resolve_rfdiffusion_pdb(candidate)
+            if rfdiff_backbone and rfdiff_backbone.exists():
+                backbone_rmsd = self._calculate_backbone_rmsd(rfdiff_backbone, colabfold_pdb, chain_id='B')
+                candidate.metrics["backbone_rmsd_rfdiff_vs_cf"] = backbone_rmsd
             else:
-                candidate.decision = {"gate": "PASS", "reason": f"Consensus RMSD {rmsd:.2f}, pAE {pae:.2f}"}
+                backbone_rmsd = None
+                logger.warning("  RFdiffusion backbone not found, skipping backbone RMSD")
+
+            # 2. Interface PAE (타겟-바인더 상호작용)
+            interface_pae = self._calculate_interface_pae(colabfold_pdb, target_chain='A', binder_chain='B')
+            candidate.metrics["interface_pae"] = interface_pae
+
+            # 3. 바인더 pLDDT (신뢰도)
+            binder_plddt = self._calculate_chain_plddt(colabfold_pdb, chain_id='B')
+            candidate.metrics["binder_plddt"] = binder_plddt
+
+            # 4. Interface pTM (상호작용 품질)
+            iptm = self._calculate_iptm(colabfold_pdb)
+            candidate.metrics["iptm"] = iptm
+
+            # 필터링 gates
+            gates = self.deep_config["gates"]
+            fail_reasons = []
+            
+            if backbone_rmsd is not None and backbone_rmsd >= gates["backbone_rmsd_threshold"]:
+                fail_reasons.append(f"Backbone RMSD {backbone_rmsd:.2f} >= {gates['backbone_rmsd_threshold']}")
+            
+            if interface_pae >= gates["interface_pae_threshold"]:
+                fail_reasons.append(f"Interface PAE {interface_pae:.2f} >= {gates['interface_pae_threshold']}")
+            
+            if binder_plddt < gates["binder_plddt_threshold"]:
+                fail_reasons.append(f"Binder pLDDT {binder_plddt:.1f} < {gates['binder_plddt_threshold']}")
+            
+            if iptm < gates["iptm_threshold"]:
+                fail_reasons.append(f"ipTM {iptm:.3f} < {gates['iptm_threshold']}")
+
+            if fail_reasons:
+                candidate.decision = {"gate": "FAIL", "reason": "; ".join(fail_reasons)}
+                candidate.stage = "failed"
+                logger.info(f"  FAIL - {'; '.join(fail_reasons)}")
+            else:
+                candidate.decision = {"gate": "PASS", "reason": f"All metrics passed"}
                 candidate.stage = "deep_validated"
-                logger.info(f"  VALIDATED - RMSD: {rmsd:.2f}, pAE: {pae:.2f}")
+                logger.info(f"  VALIDATED - Backbone RMSD: {backbone_rmsd:.2f if backbone_rmsd else 'N/A'}, "
+                           f"Interface PAE: {interface_pae:.2f}, Binder pLDDT: {binder_plddt:.1f}, ipTM: {iptm:.3f}")
 
             candidates_dir = Path(self.config["project_root"]) / self.config["paths"]["candidates"]
             candidate.save(candidates_dir)
@@ -315,13 +344,55 @@ class Phase3ScreeningAndValidation:
 
         raise RuntimeError(f"DockQ execution failed or unparsable output: {last_err}")
 
+    def _calculate_backbone_rmsd(self, ref_pdb: Path, model_pdb: Path, chain_id: str = 'B') -> float:
+        """
+        Calculate backbone RMSD between reference (RFdiffusion) and model (ColabFold) for specific chain.
+        Placeholder: returns random value for now.
+        TODO: Implement using BioPython or similar library.
+        """
+        import random
+        random.seed(hash(str(ref_pdb) + str(model_pdb) + chain_id))
+        return random.uniform(0.5, 2.5)
+
+    def _calculate_interface_pae(self, pdb: Path, target_chain: str = 'A', binder_chain: str = 'B') -> float:
+        """
+        Calculate average PAE for interface residues between target and binder.
+        Placeholder: returns random value for now.
+        TODO: Parse ColabFold PAE matrix JSON and calculate interface PAE.
+        """
+        import random
+        random.seed(hash(str(pdb) + target_chain + binder_chain))
+        return random.uniform(2.0, 8.0)
+
+    def _calculate_chain_plddt(self, pdb: Path, chain_id: str = 'B') -> float:
+        """
+        Calculate average pLDDT for a specific chain.
+        Placeholder: returns random value for now.
+        TODO: Parse pLDDT from ColabFold output (B-factor column in PDB).
+        """
+        import random
+        random.seed(hash(str(pdb) + chain_id + "plddt"))
+        return random.uniform(60.0, 95.0)
+
+    def _calculate_iptm(self, pdb: Path) -> float:
+        """
+        Calculate interface pTM score.
+        Placeholder: returns random value for now.
+        TODO: Parse from ColabFold JSON output.
+        """
+        import random
+        random.seed(hash(str(pdb) + "iptm"))
+        return random.uniform(0.4, 0.9)
+
     def _calculate_rmsd(self, pdb1: Path, pdb2: Path) -> float:
+        """Deprecated: Use _calculate_backbone_rmsd instead."""
         import random
 
         random.seed(hash(str(pdb1) + str(pdb2)))
         return random.uniform(0.5, 3.0)
 
     def _calculate_pae_interaction(self, pdb: Path) -> float:
+        """Deprecated: Use _calculate_interface_pae instead."""
         import random
 
         random.seed(hash(str(pdb)))

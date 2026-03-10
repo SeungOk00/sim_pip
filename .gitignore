@@ -7,3 +7,4 @@ package.json
 candidates
 *.log
 outputs
+.boltz_venv
