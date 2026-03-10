@@ -1,14 +1,13 @@
-pyyaml>=6.0
-dataclasses-json>=0.6.0
+--find-links https://data.dgl.ai/wheels/torch-2.3/cu121/repo.html
+
 pyyaml>=6.0
 dataclasses-json>=0.6.0
 omegaconf
 hydra-core 
 pyrsistent
-dgl -f https://data.dgl.ai/wheels/torch-2.2/cu121/repo.html
+dgl
 torchdata<0.8.0
 e3nn
-torch==2.2.1
-## sim_tool
+torch>=2.3.1,<2.7
 chai_lab==0.6.1
-boltz[cuda] -U
+boltz

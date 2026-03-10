@@ -127,11 +127,11 @@ class RFdiffusionRunner(ToolRunner):
         
         logger.info(f"RFdiffusion command: {command_str}")
         
-        # Add parent directory and SE3Transformer to PYTHONPATH for imports
+        # Add rfdiffusion directory and SE3Transformer to PYTHONPATH for imports
         import os
         se3_path = self.tool_path / "env/SE3Transformer"
         env = {
-            'PYTHONPATH': f"{self.tool_path.parent}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
+            'PYTHONPATH': f"{self.tool_path}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
         }
         
         exit_code, stdout, stderr = self.run(command, cwd=self.tool_path, env=env)
@@ -164,17 +164,227 @@ class RFdiffusionRunner(ToolRunner):
             output_prefix="binder"
         )
     
-    def refine(self, input_pdb: Path, output_dir: Path, T: int = 15) -> Path:
+    def _renumber_pdb(self, input_pdb: Path, output_pdb: Path, start_from: int = 0) -> Path:
+        """
+        Renumber PDB residues to start from a specific number (usually 0 or 1).
+        Preserves chain IDs and other information.
+        
+        Args:
+            input_pdb: Input PDB file
+            output_pdb: Output PDB file with renumbered residues
+            start_from: Starting residue number (default: 0)
+        
+        Returns:
+            Path to renumbered PDB file
+        """
+        output_pdb.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Track residue mapping per chain
+        chain_residue_map = {}
+        
+        # First pass: build mapping
+        with open(input_pdb, 'r') as f:
+            for line in f:
+                if not line.startswith(('ATOM', 'HETATM')):
+                    continue
+                
+                chain_id = line[21].strip()
+                old_resseq = int(line[22:26].strip())
+                icode = line[26].strip()
+                
+                key = (old_resseq, icode)
+                
+                if chain_id not in chain_residue_map:
+                    chain_residue_map[chain_id] = {}
+                
+                if key not in chain_residue_map[chain_id]:
+                    new_resnum = start_from + len(chain_residue_map[chain_id])
+                    chain_residue_map[chain_id][key] = new_resnum
+        
+        # Second pass: write renumbered PDB
+        with open(output_pdb, 'w') as out:
+            with open(input_pdb, 'r') as f:
+                for line in f:
+                    if line.startswith(('ATOM', 'HETATM')):
+                        chain_id = line[21].strip()
+                        old_resseq = int(line[22:26].strip())
+                        icode = line[26].strip()
+                        
+                        key = (old_resseq, icode)
+                        new_resseq = chain_residue_map[chain_id][key]
+                        
+                        # Replace residue number (columns 23-26) and clear icode (column 27)
+                        new_line = line[:22] + f"{new_resseq:4d} " + line[27:]
+                        out.write(new_line)
+                    elif line.startswith('TER'):
+                        # Update TER record residue number
+                        if len(line) > 26:
+                            chain_id = line[21].strip()
+                            try:
+                                old_resseq = int(line[22:26].strip())
+                                icode = line[26].strip()
+                                key = (old_resseq, icode)
+                                new_resseq = chain_residue_map.get(chain_id, {}).get(key, old_resseq)
+                                new_line = line[:22] + f"{new_resseq:4d} " + line[27:]
+                                out.write(new_line)
+                            except:
+                                out.write(line)
+                        else:
+                            out.write(line)
+                    else:
+                        out.write(line)
+        
+        logger.info(f"Renumbered PDB: {input_pdb.name} -> {output_pdb.name} (starting from {start_from})")
+        return output_pdb
+    
+    def _extract_chain_from_pdb(self, input_pdb: Path, output_pdb: Path, chain_id: str) -> Path:
+        """
+        Extract a specific chain from PDB file.
+        
+        Args:
+            input_pdb: Input PDB file
+            output_pdb: Output PDB file
+            chain_id: Chain ID to extract
+        
+        Returns:
+            Path to extracted chain PDB
+        """
+        output_pdb.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_pdb, 'w') as out:
+            with open(input_pdb, 'r') as f:
+                for line in f:
+                    if line.startswith(('ATOM', 'HETATM')):
+                        if line[21].strip() == chain_id:
+                            out.write(line)
+                    elif line.startswith('TER'):
+                        # Write TER only if it's for our chain
+                        if len(line) > 21 and line[21].strip() == chain_id:
+                            out.write(line)
+            out.write('END\n')
+        
+        return output_pdb
+    
+    def _merge_target_binder(self, target_pdb: Path, binder_pdb: Path, 
+                            output_pdb: Path, target_chain: str = 'A') -> Path:
+        """
+        Merge target and binder PDB files into a complex.
+        
+        Args:
+            target_pdb: Target PDB file
+            binder_pdb: Binder PDB file (chain B)
+            output_pdb: Output complex PDB file
+            target_chain: Target chain ID (default: A)
+        
+        Returns:
+            Path to merged PDB file
+        """
+        output_pdb.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_pdb, 'w') as out:
+            # Write target chain
+            with open(target_pdb, 'r') as f:
+                for line in f:
+                    if line.startswith(('ATOM', 'HETATM')):
+                        # Ensure target uses specified chain
+                        new_line = line[:21] + target_chain + line[22:]
+                        out.write(new_line)
+                    elif line.startswith('TER'):
+                        out.write(line)
+            
+            # Write binder chain (should already be chain B)
+            with open(binder_pdb, 'r') as f:
+                for line in f:
+                    if line.startswith(('ATOM', 'HETATM')):
+                        out.write(line)
+                    elif line.startswith('TER'):
+                        out.write(line)
+            
+            out.write('END\n')
+        
+        return output_pdb
+    
+    def _parse_pdb_chain_info(self, pdb_path: Path) -> Dict[str, Dict]:
+        """
+        Parse PDB file and return chain information including residue ranges.
+        
+        Returns:
+            Dict mapping chain_id -> {
+                'length': int,
+                'start': int,
+                'end': int
+            }
+        """
+        chain_residues = {}
+        
+        with open(pdb_path, 'r') as f:
+            for line in f:
+                if not line.startswith('ATOM'):
+                    continue
+                if len(line) < 27:
+                    continue
+                
+                chain_id = line[21].strip()
+                resseq = int(line[22:26].strip())
+                icode = line[26].strip()
+                
+                key = (chain_id, resseq, icode)
+                if chain_id not in chain_residues:
+                    chain_residues[chain_id] = set()
+                chain_residues[chain_id].add(resseq)
+        
+        # Calculate length and range for each chain
+        chain_info = {}
+        for chain, residues in chain_residues.items():
+            res_list = sorted(residues)
+            chain_info[chain] = {
+                'length': len(residues),
+                'start': min(res_list),
+                'end': max(res_list)
+            }
+        
+        return chain_info
+    
+    def refine(self, input_pdb: Path, output_dir: Path, T: int = 15, 
+               target_chain: str = 'A', binder_chain: str = 'B') -> Path:
         """
         Run partial diffusion for refinement
         
-        Note: Partial diffusion requires contig length to match input structure
+        Args:
+            input_pdb: Input PDB file (should be renumbered starting from 0)
+            output_dir: Output directory
+            T: Number of diffusion timesteps for refinement
+            target_chain: Target chain ID (default: A)
+            binder_chain: Binder chain ID (default: B)
+        
+        Returns:
+            Path to refined PDB file
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Calculate input length (simplified - actual implementation needs PDB parsing)
-        # For now, use a placeholder
-        logger.warning("Refinement not fully implemented - requires structure length calculation")
+        # Parse structure information
+        chain_info = self._parse_pdb_chain_info(input_pdb)
+        
+        if target_chain not in chain_info or binder_chain not in chain_info:
+            raise ValueError(
+                f"Required chains not found. Found: {list(chain_info.keys())}, "
+                f"Expected: {target_chain}, {binder_chain}"
+            )
+        
+        target_info = chain_info[target_chain]
+        binder_info = chain_info[binder_chain]
+        
+        logger.info(
+            f"Refining structure: "
+            f"target={target_info['length']} residues ({target_info['start']}-{target_info['end']}), "
+            f"binder={binder_info['length']} residues ({binder_info['start']}-{binder_info['end']})"
+        )
+        
+        # For renumbered PDB (starting from 0), use simple format
+        # Format: [A0-N/0 M-M] where N=target_end, M=binder_length
+        target_range = f"{target_chain}{target_info['start']}-{target_info['end']}"
+        binder_len = binder_info['length']
+        contig_str = f"{target_range}/0 {binder_len}-{binder_len}"
         
         command = [
             "python",
@@ -183,10 +393,18 @@ class RFdiffusionRunner(ToolRunner):
             f"inference.output_prefix={output_dir}/refined",
             f"inference.num_designs=1",
             f"diffuser.partial_T={T}",
-            f"diffuser.T=50"
+            f"diffuser.T=50",
+            f"contigmap.contigs=[{contig_str}]"
         ]
         
-        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
+        # Add rfdiffusion directory and SE3Transformer to PYTHONPATH for imports
+        import os
+        se3_path = self.tool_path / "env/SE3Transformer"
+        env = {
+            'PYTHONPATH': f"{self.tool_path}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
+        }
+        
+        exit_code, stdout, stderr = self.run(command, cwd=self.tool_path, env=env)
         
         if exit_code != 0:
             raise RuntimeError(f"RFdiffusion refinement failed: {stderr}")
@@ -377,8 +595,9 @@ class ChaiRunner(ToolRunner):
 class BoltzRunner(ToolRunner):
     """Boltz tool wrapper"""
 
-    def __init__(self, tool_path: str, dry_run: bool = False):
+    def __init__(self, tool_path: str, venv_path: Optional[str] = None, dry_run: bool = False):
         super().__init__("Boltz", tool_path, dry_run)
+        self.venv_path = Path(venv_path) if venv_path else None
 
     def predict_complex(
         self,
@@ -391,13 +610,31 @@ class BoltzRunner(ToolRunner):
     ) -> Tuple[Path, Dict[str, float]]:
         """Predict complex structure with Boltz."""
         output_dir.mkdir(parents=True, exist_ok=True)
-        cmd = command_template.format(
-            target_pdb=target_pdb,
-            binder_fasta=binder_fasta,
-            output_dir=output_dir,
-            input_path=(input_path if input_path is not None else binder_fasta),
-        )
-        command = shlex.split(cmd)
+        
+        # Use Boltz venv Python if specified
+        if self.venv_path:
+            venv_python = self.venv_path / "bin" / "python"
+            if not venv_python.exists():
+                raise RuntimeError(f"Boltz venv Python not found: {venv_python}")
+            # Replace 'boltz' command with venv python + module
+            cmd = command_template.format(
+                target_pdb=target_pdb,
+                binder_fasta=binder_fasta,
+                output_dir=output_dir,
+                input_path=(input_path if input_path is not None else binder_fasta),
+            )
+            # Replace 'boltz' with 'python -m boltz.main'
+            if cmd.startswith('boltz '):
+                cmd = f"{venv_python} -m boltz.main " + cmd[6:]
+            command = shlex.split(cmd)
+        else:
+            cmd = command_template.format(
+                target_pdb=target_pdb,
+                binder_fasta=binder_fasta,
+                output_dir=output_dir,
+                input_path=(input_path if input_path is not None else binder_fasta),
+            )
+            command = shlex.split(cmd)
 
         exit_code, stdout, stderr = self.run(command, cwd=self.tool_path)
         if exit_code != 0:

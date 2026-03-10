@@ -29,7 +29,11 @@ class Phase3ScreeningAndValidation:
         self.boltz = None
         boltz_cfg = self.fast_config.get("boltz", {})
         if boltz_cfg.get("enabled", False):
-            self.boltz = BoltzRunner(boltz_cfg.get("path", ""), dry_run=dry_run)
+            self.boltz = BoltzRunner(
+                boltz_cfg.get("path", ""),
+                venv_path=boltz_cfg.get("venv_path"),
+                dry_run=dry_run
+            )
 
     def run(self, state: PipelineState) -> PipelineState:
         logger.info("=" * 80)
@@ -87,8 +91,6 @@ class Phase3ScreeningAndValidation:
 
     def _fast_screen_candidate(self, candidate: DesignCandidate, run_dir: Path, state: PipelineState):
         logger.info(f"\nScreening {candidate.candidate_id}...")
-        cand_dir = run_dir / candidate.candidate_id
-        ensure_dir(cand_dir)
 
         try:
             target_pdb = self._resolve_rfdiffusion_pdb(candidate) or Path(state.target.target_pdb_path)
@@ -103,7 +105,11 @@ class Phase3ScreeningAndValidation:
                 raise ValueError(f"No binder sequence available for {candidate.candidate_id}")
 
             if fasta_path is None:
-                fasta_path = cand_dir / "binder.fasta"
+                # Only create fasta if it doesn't exist
+                project_root = Path(self.config["project_root"])
+                temp_dir = project_root / "outputs" / "temp_fasta"
+                ensure_dir(temp_dir)
+                fasta_path = temp_dir / f"{candidate.candidate_id}.fasta"
                 with open(fasta_path, "w") as f:
                     f.write(f">{candidate.candidate_id}\n{binder_sequence}\n")
             else:
@@ -112,19 +118,33 @@ class Phase3ScreeningAndValidation:
             logger.info(f"  target pdb: {target_pdb}")
             logger.info(f"  binder fasta: {fasta_path}")
 
-            chai_dir = cand_dir / "chai"
-            chai_cfg = self.fast_config.get("chai", {})
-            chai_input = chai_dir / "chai_input.fasta"
+            # Create Chai-1 directories
+            project_root = Path(self.config["project_root"])
+            now = datetime.now()
+            date_dir = now.strftime("%Y-%m-%d")
+            time_dir = now.strftime("%H-%M-%S")
+            # Add microseconds to ensure unique directory for each attempt
+            unique_id = now.strftime("%H-%M-%S-%f")
+            
+            # Chai input file in temp location
+            chai_input_dir = project_root / "outputs" / "temp_chai_input"
+            ensure_dir(chai_input_dir)
+            chai_input = chai_input_dir / f"{candidate.candidate_id}_{unique_id}_chai_input.fasta"
             self._write_chai_fasta_input(
                 target_pdb=target_pdb,
                 target_chain=state.target.chain_id,
                 binder_sequence=binder_sequence,
                 out_fasta=chai_input,
             )
+            
+            # Chai output directory (must be empty) - use unique_id for each attempt
+            chai_output_dir = project_root / "outputs" / "chai1" / date_dir / unique_id / candidate.candidate_id
+            
+            chai_cfg = self.fast_config.get("chai", {})
             chai_pdb, chai_conf = self.chai.predict_complex(
                 target_pdb=target_pdb,
                 binder_fasta=fasta_path,
-                output_dir=chai_dir,
+                output_dir=chai_output_dir,
                 command_template=chai_cfg.get(
                     "command_template",
                     "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",

@@ -29,16 +29,28 @@ def compute_file_hash(filepath: Path) -> str:
     return sha256_hash.hexdigest()
 
 
-def get_next_candidate_id(base_dir: Path) -> str:
-    """Generate next candidate ID (C000001, C000002, ...)"""
-    if not base_dir.exists():
+def get_next_candidate_id(state: 'PipelineState') -> str:
+    """
+    Generate next candidate ID (C000001, C000002, ...) for current run.
+    Uses state.candidates list instead of file system to avoid cross-run conflicts.
+    """
+    if not state.candidates:
         return "C000001"
     
-    existing = [d.name for d in base_dir.iterdir() if d.is_dir() and d.name.startswith('C')]
-    if not existing:
+    # Get max candidate number from current state
+    existing_nums = []
+    for candidate in state.candidates:
+        if candidate.candidate_id.startswith('C'):
+            try:
+                num = int(candidate.candidate_id[1:])
+                existing_nums.append(num)
+            except ValueError:
+                continue
+    
+    if not existing_nums:
         return "C000001"
     
-    max_num = max([int(cid[1:]) for cid in existing])
+    max_num = max(existing_nums)
     return f"C{max_num + 1:06d}"
 
 

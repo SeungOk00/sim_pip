@@ -31,7 +31,7 @@ DEFAULT_CONFIG = {
             "binder_length": "80-80",
             "noise_scale": 0.0,
             "output_prefix": "binder",
-            "max_refinement_iterations": 3
+            "max_refinement_iterations": 3  # Renumbering 구현 완료
         },
         "proteinmpnn": {
             "path": "/home01/hpc194a02/test/sim_pip/proteinmpnn",
@@ -48,12 +48,13 @@ DEFAULT_CONFIG = {
     "phase3_fast": {
         "chai": {
             "path": "",
-            "command_template": "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",
+            "command_template": "chai-lab fold --use-msa-server {input_path} {output_dir}",
             "output_file": ""
         },
         "boltz": {
-            "enabled": True,
+            "enabled": False,
             "path": "",
+            "venv_path": "/home01/hpc194a02/test/boltz_venv",
             "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
             "output_file": ""
         },

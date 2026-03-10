@@ -181,13 +181,40 @@ class Phase2GenerativeDesign:
         
         T = self.phase_config['rfdiffusion']['refinement_T']
         max_iterations = self.phase_config['rfdiffusion']['max_refinement_iterations']
+        target_pdb = Path(state.target.target_pdb_path)
+        target_chain = state.target.chain_id
         
         refined = []
         
         for i, backbone in enumerate(backbones):
             logger.info(f"Refining backbone {i+1}/{len(backbones)}: {backbone.name}")
             
-            current_backbone = backbone
+            # Merge target and binder for refinement input
+            merge_dir = refine_dir / f"backbone_{i:03d}_merged"
+            ensure_dir(merge_dir)
+            merged_pdb = merge_dir / "complex.pdb"
+            
+            try:
+                self.rfdiffusion._merge_target_binder(
+                    target_pdb=target_pdb,
+                    binder_pdb=backbone,
+                    output_pdb=merged_pdb,
+                    target_chain=target_chain
+                )
+                
+                # Renumber residues starting from 0 (required for partial diffusion)
+                renumbered_pdb = merge_dir / "complex_renumbered.pdb"
+                self.rfdiffusion._renumber_pdb(
+                    input_pdb=merged_pdb,
+                    output_pdb=renumbered_pdb,
+                    start_from=0
+                )
+                current_backbone = renumbered_pdb
+                
+            except Exception as e:
+                logger.error(f"Failed to merge/renumber target and binder: {str(e)}")
+                refined.append(backbone)
+                continue
             
             for iteration in range(max_iterations):
                 try:
@@ -197,7 +224,9 @@ class Phase2GenerativeDesign:
                     refined_backbone = self.rfdiffusion.refine(
                         input_pdb=current_backbone,
                         output_dir=iter_dir,
-                        T=T
+                        T=T,
+                        target_chain=target_chain,
+                        binder_chain='B'
                     )
                     
                     current_backbone = refined_backbone
@@ -206,7 +235,23 @@ class Phase2GenerativeDesign:
                     logger.warning(f"Refinement iteration {iteration} failed: {str(e)}")
                     break
             
-            refined.append(current_backbone)
+            # Extract binder chain only for ProteinMPNN
+            # (Refinement output contains both target and binder)
+            extract_dir = refine_dir / f"backbone_{i:03d}_binder_only"
+            ensure_dir(extract_dir)
+            binder_only_pdb = extract_dir / "binder.pdb"
+            
+            try:
+                self.rfdiffusion._extract_chain_from_pdb(
+                    input_pdb=current_backbone,
+                    output_pdb=binder_only_pdb,
+                    chain_id='B'
+                )
+                refined.append(binder_only_pdb)
+                logger.info(f"  Extracted binder chain: {binder_only_pdb}")
+            except Exception as e:
+                logger.error(f"Failed to extract binder chain: {str(e)}")
+                refined.append(backbone)  # Fallback to original
         
         return refined
     
@@ -245,7 +290,7 @@ class Phase2GenerativeDesign:
                 
                 # Create candidate for each sequence
                 for j, (sequence, source_fasta) in enumerate(sequences):
-                    candidate_id = get_next_candidate_id(candidates_dir)
+                    candidate_id = get_next_candidate_id(state)
                     
                     candidate = DesignCandidate(
                         candidate_id=candidate_id,
@@ -260,6 +305,8 @@ class Phase2GenerativeDesign:
                     # Save candidate
                     candidate.save(candidates_dir)
                     candidates.append(candidate)
+                    # IMPORTANT: Also add to state so next ID is unique
+                    state.candidates.append(candidate)
                     
             except Exception as e:
                 logger.error(f"ProteinMPNN failed for backbone {i}: {str(e)}")
