@@ -6,5 +6,4 @@ package-lock.json
 package.json
 candidates
 *.log
-msas
-proteinmpnn
+outputs
