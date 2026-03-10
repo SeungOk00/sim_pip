@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     # Phase 2: Generation
     "phase2": {
         "rfdiffusion": {
-            "path": "/home01/hpc194a02/test/sim_pip/rfdiffusion",
+            "path": "/home01/hpc194a02/test/sim_pip/tools/rfdiffusion",
             "de_novo_T": 50,
             "refinement_T": 15,
             "num_designs": 1,
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
             "max_refinement_iterations": 3  # Renumbering 구현 완료
         },
         "proteinmpnn": {
-            "path": "/home01/hpc194a02/test/sim_pip/proteinmpnn",
+            "path": "/home01/hpc194a02/test/sim_pip/tools/proteinmpnn",
             "num_seq_per_target": 10,
             "sampling_temps": [0.1],
             "batch_size": 1,
@@ -69,7 +69,7 @@ DEFAULT_CONFIG = {
     # Phase 3-B: Deep Validation
     "phase3_deep": {
         "colabfold": {
-            "path": "/home01/hpc194a02/test/sim_pip/ColabFold"
+            "path": "/home01/hpc194a02/test/sim_pip/tools/colabfold"
         },
         "gates": {
             "backbone_rmsd_threshold": 2.0,      # RFdiffusion 백본 vs ColabFold 바인더 RMSD

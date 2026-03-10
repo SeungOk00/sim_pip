@@ -159,7 +159,7 @@ class Phase3ScreeningAndValidation:
             if self.boltz is not None:
                 boltz_cfg = self.fast_config.get("boltz", {})
                 # Boltz output directory (similar to Chai structure)
-                boltz_output_dir = project_root / "outputs" / "boltz" / date_dir / unique_id / candidate.candidate_id
+                boltz_output_dir = project_root / self.config['paths']['outputs'] / "boltz" / date_dir / unique_id / candidate.candidate_id
                 ensure_dir(boltz_output_dir)
                 boltz_input = boltz_output_dir / "boltz_input.fasta"
                 self._write_boltz_fasta_input(

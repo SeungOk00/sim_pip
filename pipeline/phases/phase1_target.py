@@ -58,7 +58,7 @@ class Phase1TargetDiscovery:
 
         project_root = Path(self.config['project_root'])
 
-        # Normalize initial input under inputs/pdb/YYYY-MM-DD/HH-MM-SS/
+        # Normalize initial input under data/inputs/pdb/YYYY-MM-DD/HH-MM-SS/
         inputs_pdb_dir = project_root / self.config['paths']['inputs_pdb'] / date_dir / time_dir
         inputs_pdb_dir.mkdir(parents=True, exist_ok=True)
         normalized_target_pdb = inputs_pdb_dir / target_pdb.name

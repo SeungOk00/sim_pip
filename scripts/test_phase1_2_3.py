@@ -6,8 +6,9 @@ import sys
 import logging
 from pathlib import Path
 
-# Add pipeline to path
-sys.path.insert(0, str(Path(__file__).parent))
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from pipeline.config import Config
 from pipeline.models import PipelineState
@@ -30,6 +31,10 @@ def test_phase1_2_3():
     logger.info("Loading configuration...")
     config = Config()
     
+    # Get project root
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    
     # Create pipeline state
     from datetime import datetime
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -45,10 +50,23 @@ def test_phase1_2_3():
     
     phase1 = Phase1TargetDiscovery(config.to_dict())
     
-    # Test with the target.pdb we used for RFdiffusion
-    target_pdb_path = "/home01/hpc194a02/test/sim_pip/test_rfdiffusion/target.pdb"
+    # Test with the target.pdb from data/inputs directory
+    # Note: This file was moved during folder restructuring
+    target_pdb_path = project_root / "data/inputs/pdb/2026-03-10/18-23-25/target.pdb"
+    
+    # Fallback: Check if file exists, otherwise use any available target.pdb
+    if not target_pdb_path.exists():
+        logger.warning(f"Target PDB not found at {target_pdb_path}")
+        # Try to find any target.pdb in data/inputs/pdb
+        pdb_files = list((project_root / "data/inputs/pdb").rglob("target.pdb"))
+        if pdb_files:
+            target_pdb_path = pdb_files[0]
+            logger.info(f"Using alternative target PDB: {target_pdb_path}")
+        else:
+            raise FileNotFoundError("No target.pdb found in data/inputs/pdb/")
+    
     chain_id = "A"
-    hotspot_residues = [982, 990, 995]  # Same as we used before
+    hotspot_residues = [982, 990, 995]  # Insulin receptor kinase domain hotspots
     notes = "Test run for insulin receptor kinase domain (4IBM) - Phase 1-2-3"
     
     logger.info(f"\nTest inputs:")
@@ -60,7 +78,7 @@ def test_phase1_2_3():
     try:
         state = phase1.run(
             state=state,
-            target_pdb_path=target_pdb_path,
+            target_pdb_path=str(target_pdb_path),
             chain_id=chain_id,
             hotspot_residues=hotspot_residues,
             notes=notes
