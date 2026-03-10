@@ -49,14 +49,37 @@ conda env list | grep SE3nv
 
 # SE3nv 환경이 없다면 생성
 conda env create -f tools/rfdiffusion/env/SE3nv.yml
+```
 
-# 모델 가중치 다운로드 (처음 한 번만, 수 GB)
+**모델 가중치 다운로드** (필수):
+
+```bash
 cd tools/rfdiffusion
-bash scripts/download_models.sh
+
+# 방법 1: 모든 모델 다운로드 (약 10-15 GB)
+bash scripts/download_models.sh models
+
+# 방법 2: 필수 파일만 다운로드 (약 2-3 GB, 권장)
+mkdir -p models
+cd models
+wget http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt
+
+# wget이 없는 경우 curl 사용
+curl -o Complex_base_ckpt.pt \
+  http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt
 
 # 모델 파일 확인
-ls -lh models/Complex_base_ckpt.pt
+ls -lh Complex_base_ckpt.pt
 ```
+
+**다운로드되는 모델 목록**:
+- `Complex_base_ckpt.pt` ⭐ (필수 - 단백질 복합체용, ~2.1 GB)
+- `Base_ckpt.pt` (기본 모델)
+- `Complex_Fold_base_ckpt.pt` (복합체 폴딩)
+- `InpaintSeq_ckpt.pt` (서열 inpainting)
+- `InpaintSeq_Fold_ckpt.pt` (서열 inpainting + 폴딩)
+- `ActiveSite_ckpt.pt` (활성 부위)
+- `Base_epoch8_ckpt.pt` (기본 모델 epoch 8)
 
 **RFdiffusion 설치 검증**:
 
@@ -237,10 +260,41 @@ DEFAULT_CONFIG = {
 
 #### RFdiffusion 모델 가중치 없음
 
+**에러**: `FileNotFoundError: Complex_base_ckpt.pt`
+
+**해결**:
+
 ```bash
+# 현재 위치 확인
+pwd  # /home01/hpc194a02/test/sim_pip 이어야 함
+
+# 방법 1: 전체 스크립트 사용
 cd tools/rfdiffusion
+bash scripts/download_models.sh models
+
+# 방법 2: 필수 파일만 다운로드 (빠름)
+mkdir -p tools/rfdiffusion/models
+cd tools/rfdiffusion/models
+wget http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt
+
+# wget 없는 경우
+curl -o Complex_base_ckpt.pt \
+  http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt
+
+# 다운로드 확인
+ls -lh tools/rfdiffusion/models/Complex_base_ckpt.pt
+```
+
+#### download_models.sh 사용 시 주의사항
+
+스크립트는 다운로드 디렉토리를 **인자로 필요**합니다:
+
+```bash
+# ❌ 잘못된 사용
 bash scripts/download_models.sh
-ls models/  # Complex_base_ckpt.pt 확인
+
+# ✅ 올바른 사용
+bash scripts/download_models.sh models
 ```
 
 #### GPU 메모리 부족

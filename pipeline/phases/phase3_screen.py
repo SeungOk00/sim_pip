@@ -24,7 +24,14 @@ class Phase3ScreeningAndValidation:
         self.deep_config = config["phase3_deep"]
 
         dry_run = config.get("execution", {}).get("dry_run", False)
-        self.chai = ChaiRunner(self.fast_config["chai"]["path"], dry_run=dry_run)
+        
+        # Initialize Chai with venv_path
+        chai_cfg = self.fast_config["chai"]
+        self.chai = ChaiRunner(
+            chai_cfg["path"], 
+            dry_run=dry_run,
+            venv_path=chai_cfg.get("venv_path")
+        )
 
         self.boltz = None
         boltz_cfg = self.fast_config.get("boltz", {})
@@ -107,7 +114,8 @@ class Phase3ScreeningAndValidation:
             if fasta_path is None:
                 # Only create fasta if it doesn't exist
                 project_root = Path(self.config["project_root"])
-                temp_dir = project_root / "outputs" / "temp_fasta"
+                outputs_root = project_root / self.config["paths"]["outputs"]
+                temp_dir = outputs_root / "temp_fasta"
                 ensure_dir(temp_dir)
                 fasta_path = temp_dir / f"{candidate.candidate_id}.fasta"
                 with open(fasta_path, "w") as f:
@@ -120,6 +128,7 @@ class Phase3ScreeningAndValidation:
 
             # Create Chai-1 directories
             project_root = Path(self.config["project_root"])
+            outputs_root = project_root / self.config["paths"]["outputs"]
             now = datetime.now()
             date_dir = now.strftime("%Y-%m-%d")
             time_dir = now.strftime("%H-%M-%S")
@@ -127,7 +136,7 @@ class Phase3ScreeningAndValidation:
             unique_id = now.strftime("%H-%M-%S-%f")
             
             # Chai input file in temp location
-            chai_input_dir = project_root / "outputs" / "temp_chai_input"
+            chai_input_dir = outputs_root / "temp_chai_input"
             ensure_dir(chai_input_dir)
             chai_input = chai_input_dir / f"{candidate.candidate_id}_{unique_id}_chai_input.fasta"
             self._write_chai_fasta_input(
@@ -138,7 +147,7 @@ class Phase3ScreeningAndValidation:
             )
             
             # Chai output directory (must be empty) - use unique_id for each attempt
-            chai_output_dir = project_root / "outputs" / "chai1" / date_dir / unique_id / candidate.candidate_id
+            chai_output_dir = outputs_root / "chai1" / date_dir / unique_id / candidate.candidate_id
             
             chai_cfg = self.fast_config.get("chai", {})
             chai_pdb, chai_conf = self.chai.predict_complex(

@@ -17,9 +17,15 @@ __pycache__/
 # Data & Results
 data/
 logs/
+outputs/
+
+# Model files (too large for git)
+tools/rfdiffusion/models/*.pt
+tools/*/weights/
+tools/*/checkpoints/
 
 # Tools outputs (external tools should manage their own outputs)
-
+tools/*/outputs
 # Temporary files
 *.tmp
 *.bak

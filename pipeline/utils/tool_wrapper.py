@@ -520,8 +520,9 @@ class ProteinMPNNRunner(ToolRunner):
 class ChaiRunner(ToolRunner):
     """Chai-1 tool wrapper"""
     
-    def __init__(self, tool_path: str, dry_run: bool = False):
+    def __init__(self, tool_path: str, dry_run: bool = False, venv_path: Optional[str] = None):
         super().__init__("Chai-1", tool_path, dry_run)
+        self.venv_path = Path(venv_path) if venv_path else None
     
     def predict_complex(
         self,
@@ -537,17 +538,32 @@ class ChaiRunner(ToolRunner):
         resolved_input = input_path if input_path is not None else binder_fasta
 
         commands = []
+        
+        # Use venv Python if available
+        python_exe = "python"
+        chai_exe = "chai-lab"
+        if self.venv_path and (self.venv_path / "bin" / "python").exists():
+            python_exe = str(self.venv_path / "bin" / "python")
+            if (self.venv_path / "bin" / "chai-lab").exists():
+                chai_exe = str(self.venv_path / "bin" / "chai-lab")
+        
         if command_template:
-            commands.append(shlex.split(command_template.format(
+            # Replace 'chai-lab' in template with venv chai-lab
+            cmd_str = command_template.format(
                 target_pdb=target_pdb,
                 binder_fasta=binder_fasta,
                 input_path=resolved_input,
                 output_dir=output_dir,
-            )))
-        # pip/module/common fallbacks
+            )
+            # Replace first occurrence of 'chai-lab' with venv path
+            if cmd_str.startswith("chai-lab "):
+                cmd_str = chai_exe + cmd_str[8:]
+            commands.append(shlex.split(cmd_str))
+        
+        # Try venv chai-lab first, then python -m
         commands.extend([
-            ["chai-lab", "fold", str(resolved_input), str(output_dir)],
-            ["python", "-m", "chai_lab.main", "fold", str(resolved_input), str(output_dir)],
+            [chai_exe, "fold", str(resolved_input), str(output_dir)],
+            [python_exe, "-m", "chai_lab.main", "fold", str(resolved_input), str(output_dir)],
         ])
 
         last_err = ""

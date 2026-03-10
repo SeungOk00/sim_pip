@@ -48,6 +48,7 @@ DEFAULT_CONFIG = {
     "phase3_fast": {
         "chai": {
             "path": "",
+            "venv_path": "/home01/hpc194a02/test/sim_pip/.venv",
             "command_template": "chai-lab fold --use-msa-server {input_path} {output_dir}",
             "output_file": ""
         },
