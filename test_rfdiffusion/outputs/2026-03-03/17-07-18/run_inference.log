@@ -1,6 +1,0 @@
-[2026-03-03 17:07:18,461][__main__][INFO] - Found GPU with device_name NVIDIA A100-SXM4-80GB. Will run RFdiffusion on NVIDIA A100-SXM4-80GB
-[2026-03-03 17:07:18,462][rfdiffusion.inference.model_runners][INFO] - Reading checkpoint from /home01/hpc194a02/test/sim_pip/RFdiffusion/rfdiffusion/inference/../../models/Complex_base_ckpt.pt
-[2026-03-03 17:07:33,613][rfdiffusion.inference.model_runners][INFO] - Loading checkpoint.
-[2026-03-03 17:07:33,823][rfdiffusion.diffusion][INFO] - Calculating IGSO3.
-[2026-03-03 17:13:51,718][__main__][INFO] - Making design outputs/binder_0
-[2026-03-03 17:13:51,769][rfdiffusion.inference.model_runners][INFO] - Using contig: ['A1-150/0 80-80']

@@ -1,10 +1,26 @@
-.history
-.venv
+# Virtual environments
+.venv/
+.boltz_venv/
+*.pyc
 __pycache__/
-node_modules
-package-lock.json
-package.json
-candidates
-*.log
-outputs
-.boltz_venv
+.cache/
+
+# IDE & Editor
+.history/
+.cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Data & Results
+data/
+logs/
+
+# Tools outputs (external tools should manage their own outputs)
+
+# Temporary files
+*.tmp
+*.bak
+*~

@@ -1,0 +1,8 @@
+- inference.input_pdb=/home01/hpc194a02/test/sim_pip/inputs/pdb/2026-03-10/12-43-03/target.pdb
+- inference.output_prefix=/home01/hpc194a02/test/sim_pip/outputs/rfdiffusion/2026-03-10/12-43-03/denovo/binder
+- inference.num_designs=2
+- diffuser.T=50
+- denoiser.noise_scale_ca=0.0
+- denoiser.noise_scale_frame=0.0
+- contigmap.contigs=[A982-999/0 80-80]
+- ppi.hotspot_res=[A982,A990,A995]

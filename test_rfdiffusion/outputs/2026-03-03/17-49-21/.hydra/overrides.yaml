@@ -1,5 +1,0 @@
-- inference.input_pdb=target.pdb
-- inference.output_prefix=outputs/binder
-- inference.num_designs=1
-- contigmap.contigs=[A982-999/0 80-80]
-- ppi.hotspot_res=[A982,A990,A995]

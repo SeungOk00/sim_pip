@@ -1,0 +1,5 @@
+- inference.input_pdb=/home01/hpc194a02/test/sim_pip/outputs/rfdiffusion/2026-03-10/12-32-09/denovo/binder_1.pdb
+- inference.output_prefix=/home01/hpc194a02/test/sim_pip/outputs/rfdiffusion/2026-03-10/12-32-09/refinement/backbone_001_iter_0/refined
+- inference.num_designs=1
+- diffuser.partial_T=15
+- diffuser.T=50

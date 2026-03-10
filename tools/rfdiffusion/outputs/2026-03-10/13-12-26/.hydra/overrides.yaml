@@ -1,0 +1,6 @@
+- inference.input_pdb=/home01/hpc194a02/test/sim_pip/outputs/rfdiffusion/2026-03-10/13-08-19/refinement/backbone_000_merged/complex_renumbered.pdb
+- inference.output_prefix=/home01/hpc194a02/test/sim_pip/outputs/rfdiffusion/2026-03-10/13-08-19/refinement/backbone_000_iter_0/refined
+- inference.num_designs=1
+- diffuser.partial_T=15
+- diffuser.T=50
+- contigmap.contigs=[A0-301/0 80-80]

@@ -11,12 +11,12 @@ DEFAULT_CONFIG = {
     
     # Paths
     "paths": {
-        "inputs_pdb": "inputs/pdb",
-        "inputs_fasta": "inputs/fasta",
-        "outputs": "outputs",
+        "inputs_pdb": "data/inputs/pdb",
+        "inputs_fasta": "data/inputs/fasta",
+        "outputs": "data/outputs",
         "targets": "targets",
-        "runs": "runs",
-        "candidates": "candidates",
+        "runs": "data/runs",
+        "candidates": "data/candidates",
         "configs": "configs"
     },
     

@@ -69,51 +69,90 @@ python main.py --target-pdb target.pdb --chain-id A --hotspots "23,45,67" --dry-
 ### 중단된 파이프라인 재개
 
 ```bash
-python main.py --resume runs/2026-03-03_123456/pipeline_state.json --start-phase 3
+python main.py --resume data/runs/run_20260310_182325/pipeline_state.json --start-phase 3
 ```
 
 ## 디렉토리 구조
 
 ```
 sim_pip/
-├── pipeline/               # 파이프라인 코드
-│   ├── models.py          # 데이터 모델
-│   ├── config.py          # 설정 관리
-│   ├── phases/            # Phase별 구현
+├── README.md              # 프로젝트 설명
+├── INSTALLATION.md        # 설치 가이드
+├── requirements.txt       # Python 의존성
+├── main.py               # 메인 실행 스크립트
+│
+├── pipeline/              # 파이프라인 핵심 코드
+│   ├── models.py         # 데이터 모델
+│   ├── config.py         # 설정 관리
+│   ├── phases/           # Phase별 구현
 │   │   ├── phase1_target.py
 │   │   ├── phase2_generate.py
 │   │   ├── phase3_screen.py
 │   │   ├── phase4_optimize.py
 │   │   └── phase5_lab.py
-│   └── utils/             # 유틸리티
+│   └── utils/            # 유틸리티
 │       ├── file_ops.py
 │       ├── tool_wrapper.py
 │       └── validation.py
-├── configs/               # 설정 파일
+│
+├── configs/              # 설정 파일
 │   └── run.yaml
-├── targets/               # 타겟 정보
-│   └── T001/
-│       ├── target.pdb
+│
+├── targets/              # 타겟 정보 (메타데이터)
+│   └── Trun2026031/
 │       └── hotspot.json
-├── runs/                  # 실행 로그
-│   └── 2026-03-03_123456/
-│       ├── pipeline_state.json
-│       ├── pipeline.log
-│       ├── phase2_generate/
-│       ├── phase3_fast/
-│       ├── phase3_deep/
-│       ├── phase4_opt/
-│       └── phase5_lab/
-│           ├── final_sequences.fasta
-│           ├── SOP.md
-│           └── pipeline_summary.md
-├── candidates/            # 후보 바인더
-│   └── C000001/
-│       ├── metadata.json
-│       └── seq.fasta
-├── main.py               # 메인 실행 스크립트
-└── requirements.txt      # Python 의존성
+│
+├── tools/                # 외부 도구 래퍼 및 소스코드
+│   ├── boltz/
+│   ├── chai-1/
+│   ├── colabfold/
+│   ├── dockq/
+│   ├── proteinmpnn/
+│   └── rfdiffusion/
+│
+├── data/                 # 데이터 디렉토리 (gitignore)
+│   ├── inputs/           # 입력 데이터
+│   │   ├── pdb/          # 타겟 PDB 파일
+│   │   └── fasta/        # FASTA 파일
+│   ├── outputs/          # 각 도구의 출력
+│   │   ├── rfdiffusion/
+│   │   ├── proteinmpnn/
+│   │   ├── chai1/
+│   │   ├── colabfold/
+│   │   └── phase3_fast/
+│   ├── candidates/       # 후보 바인더
+│   │   └── C000001/
+│   │       ├── metadata.json
+│   │       └── seq.fasta
+│   └── runs/             # 실행 히스토리 및 로그
+│       └── run_20260310_182325/
+│           ├── pipeline_state.json
+│           ├── pipeline.log
+│           └── phase5_lab/
+│               ├── final_sequences.fasta
+│               ├── SOP.md
+│               └── pipeline_summary.md
+│
+├── logs/                 # 파이프라인 로그 파일 (gitignore)
+│   └── *.log
+│
+├── scripts/              # 유틸리티 스크립트
+│   ├── prepare_rfdiffusion_test.sh
+│   ├── test_phase1_2.py
+│   └── test_phase1_2_3.py
+│
+└── tests/                # 테스트 코드
+    └── test_rfdiffusion/
 ```
+
+### 주요 변경사항 (v0.2.0)
+
+- **data/**: 모든 입출력 데이터를 통합 관리
+  - `inputs/`, `outputs/`, `candidates/`, `runs/`를 `data/` 하위로 이동
+- **logs/**: 로그 파일 전용 디렉토리
+- **scripts/**: 테스트 및 유틸리티 스크립트 통합
+- **tests/**: 테스트 코드 통합
+- **.gitignore**: `data/`와 `logs/` 전체를 무시하여 Git 저장소 크기 최소화
 
 ## 설정 파일 (`configs/run.yaml`)
 
@@ -173,19 +212,22 @@ vim configs/run.yaml
 
 ```bash
 # 가장 최근 실행 로그
-ls -lt runs/
-tail -f runs/2026-03-03_123456/pipeline.log
+ls -lt data/runs/
+tail -f data/runs/run_20260310_182325/pipeline.log
+
+# 파이프라인 로그 (phase별)
+tail -f logs/phase3_test.log
 ```
 
 ### 중간 상태 확인
 
 ```bash
 # 파이프라인 상태 확인
-cat runs/2026-03-03_123456/pipeline_state.json
+cat data/runs/run_20260310_182325/pipeline_state.json
 
 # 후보 확인
-ls candidates/
-cat candidates/C000001/metadata.json
+ls data/candidates/
+cat data/candidates/C000001/metadata.json
 ```
 
 ## 예제
@@ -229,7 +271,7 @@ phase4:
 
 ```bash
 # Phase 4부터 시작
-python main.py --resume runs/2026-03-03_123456/pipeline_state.json --start-phase 4
+python main.py --resume data/runs/run_20260310_182325/pipeline_state.json --start-phase 4
 ```
 
 ### 병렬 실행 설정
@@ -253,4 +295,8 @@ execution:
 
 ## 버전
 
+- **v0.2.0** (2026-03-10): 폴더 구조 재구성
+  - `data/` 디렉토리로 입출력 데이터 통합
+  - `logs/`, `scripts/`, `tests/` 디렉토리 추가
+  - .gitignore 업데이트로 Git 저장소 크기 최적화
 - **v0.1.0** (2026-03-03): 초기 릴리스
