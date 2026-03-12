@@ -1,9 +1,9 @@
-#!/bin/uv 
+#!/bin/bash
 
 set -e
 
 echo "=========================================="
-echo "Protein Binder Design Pipeline Setup"
+echo "Protein Binder Design Pipeline Setup (Linux)"
 echo "=========================================="
 echo ""
 
@@ -43,14 +43,14 @@ if ! command -v conda &> /dev/null; then
         if [ -f "$MINICONDA_DIR/etc/profile.d/conda.sh" ]; then
             source "$MINICONDA_DIR/etc/profile.d/conda.sh"
         fi
-        export PATH="$MINICONDA_DIR/bin:$MINICONDA_DIR/Scripts:$MINICONDA_DIR/Library/bin:$PATH"
+        export PATH="$MINICONDA_DIR/bin:$PATH"
         
         # Check if conda is now accessible
         if command -v conda &> /dev/null; then
             echo "✓ Conda is accessible: $(conda --version)"
         else
             echo "WARNING: Conda installed but not accessible. Trying to initialize..."
-            "$MINICONDA_DIR/bin/conda" init bash 2>/dev/null || "$MINICONDA_DIR/Scripts/conda.exe" init bash 2>/dev/null || true
+            "$MINICONDA_DIR/bin/conda" init bash 2>/dev/null || true
             echo "Please restart your terminal and run this script again."
             exit 0
         fi
@@ -75,41 +75,6 @@ if ! command -v conda &> /dev/null; then
             else
                 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
             fi
-        elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-            MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
-            echo "Windows detected. Downloading Miniconda installer..."
-            MINICONDA_INSTALLER="./miniconda.exe"
-            
-            if command -v curl &> /dev/null; then
-                curl -o "$MINICONDA_INSTALLER" "$MINICONDA_URL"
-            elif command -v wget &> /dev/null; then
-                wget -O "$MINICONDA_INSTALLER" "$MINICONDA_URL"
-            else
-                echo "ERROR: Neither curl nor wget found. Please install one of them."
-                echo "Or manually download from: $MINICONDA_URL"
-                exit 1
-            fi
-            
-            echo "Installing Miniconda silently..."
-            echo "This will install to: $HOME/miniconda3"
-            
-            # Convert path for Windows
-            WIN_INSTALLER_PATH=$(cygpath -w "$MINICONDA_INSTALLER" 2>/dev/null || echo "$MINICONDA_INSTALLER")
-            WIN_INSTALL_DIR=$(cygpath -w "$HOME/miniconda3" 2>/dev/null || echo "$HOME/miniconda3")
-            
-            # Run installer silently
-            "$MINICONDA_INSTALLER" //InstallationType=JustMe //RegisterPython=0 //S //D="$WIN_INSTALL_DIR"
-            
-            rm -f "$MINICONDA_INSTALLER"
-            
-            # Add conda to PATH for Windows
-            export PATH="$HOME/miniconda3:$HOME/miniconda3/Scripts:$HOME/miniconda3/Library/bin:$PATH"
-            
-            echo "✓ Miniconda installed successfully."
-            echo ""
-            echo "IMPORTANT: Please restart your terminal and run this script again to complete setup."
-            echo "Or run: source ~/.bashrc"
-            exit 0
         else
             echo "ERROR: Unsupported OS type: $OSTYPE"
             echo "Please manually install Miniconda from: https://docs.conda.io/en/latest/miniconda.html"
@@ -169,6 +134,7 @@ if conda env list | grep -q "SE3nv"; then
         
         # Install SE3-Transformer
         echo "Installing SE3-Transformer..."
+        eval "$(conda shell.bash hook)"
         conda activate SE3nv
         cd tools/rfdiffusion/env/SE3Transformer
         pip install --no-cache-dir -r requirements.txt
@@ -278,21 +244,14 @@ else
     echo "✓ .venv created."
 fi
 
-# Activate virtual environment (cross-platform)
-if [ -f ".venv/Scripts/activate" ]; then
-    source .venv/Scripts/activate
-elif [ -f ".venv/bin/activate" ]; then
-    source .venv/bin/activate
-else
-    echo "ERROR: Could not find venv activation script"
-    exit 1
-fi
+# Activate virtual environment
+source .venv/bin/activate
 echo "✓ Virtual environment activated."
 
 # Upgrade pip using python -m pip
 python -m pip install --upgrade pip || echo "WARNING: pip upgrade failed, continuing..."
 
-# Install scipy via conda to avoid Fortran compilation issues on Windows
+# Install scipy via conda to avoid compilation issues
 echo "Installing scipy via conda..."
 if command -v conda &> /dev/null; then
     eval "$(conda shell.bash hook)"
@@ -353,54 +312,38 @@ else
 fi
 
 conda deactivate
-# Reactivate main venv (cross-platform)
-if [ -f ".venv/Scripts/activate" ]; then
-    source .venv/Scripts/activate
-elif [ -f ".venv/bin/activate" ]; then
-    source .venv/bin/activate
-fi
+# Reactivate main venv
+source .venv/bin/activate
 echo ""
 
 echo "[8/10] Installing PyRosetta..."
 echo ""
 
-# Check if running on Windows
-if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-    echo "WARNING: PyRosetta is not available for native Windows."
-    echo "PyRosetta conda packages are only available for Linux and macOS."
-    echo ""
-    echo "To use PyRosetta on Windows, you have two options:"
-    echo "  1. Use WSL (Windows Subsystem for Linux) and run the pipeline in WSL"
-    echo "  2. Skip Phase 4 (optimization) which requires PyRosetta"
-    echo ""
-    echo "Skipping PyRosetta installation..."
-else
-    # Linux or macOS
-    echo "Installing PyRosetta via conda..."
-    if command -v conda &> /dev/null; then
-        eval "$(conda shell.bash hook)"
-        # Use WEST coast mirror (default)
-        conda install -y -c https://conda.rosettacommons.org -c conda-forge pyrosetta || \
-        # Fallback to EAST coast mirror
-        conda install -y -c https://conda.graylab.jhu.edu -c conda-forge pyrosetta
-        
-        if python -c "import pyrosetta" 2>/dev/null; then
-            echo "✓ PyRosetta installed successfully."
-        else
-            echo "WARNING: PyRosetta installation may have failed."
-            echo "You can try manual installation with:"
-            echo "  conda install -c https://conda.rosettacommons.org -c conda-forge pyrosetta"
-        fi
+# Linux/macOS - Install PyRosetta via conda
+echo "Installing PyRosetta via conda..."
+if command -v conda &> /dev/null; then
+    eval "$(conda shell.bash hook)"
+    # Use WEST coast mirror (default)
+    conda install -y -c https://conda.rosettacommons.org -c conda-forge pyrosetta || \
+    # Fallback to EAST coast mirror
+    conda install -y -c https://conda.graylab.jhu.edu -c conda-forge pyrosetta
+    
+    if python -c "import pyrosetta" 2>/dev/null; then
+        echo "✓ PyRosetta installed successfully."
     else
-        echo "WARNING: Conda not found. Trying pip method..."
-        pip install pyrosetta-installer
-        python -c 'import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()'
-        
-        if python -c "import pyrosetta" 2>/dev/null; then
-            echo "✓ PyRosetta installed successfully."
-        else
-            echo "WARNING: PyRosetta installation may have failed."
-        fi
+        echo "WARNING: PyRosetta installation may have failed."
+        echo "You can try manual installation with:"
+        echo "  conda install -c https://conda.rosettacommons.org -c conda-forge pyrosetta"
+    fi
+else
+    echo "WARNING: Conda not found. Trying pip method..."
+    pip install pyrosetta-installer
+    python -c 'import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()'
+    
+    if python -c "import pyrosetta" 2>/dev/null; then
+        echo "✓ PyRosetta installed successfully."
+    else
+        echo "WARNING: PyRosetta installation may have failed."
     fi
 fi
 echo ""
@@ -412,19 +355,12 @@ echo ""
 if command -v kalign &> /dev/null; then
     echo "✓ kalign already installed: $(kalign --version 2>&1 | head -n 1)"
 else
-    # kalign is not available for Windows via bioconda
-    if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
-        echo "WARNING: kalign is not available for native Windows."
-        echo "Skipping kalign installation."
-        echo "Note: kalign is used for MSA (Multiple Sequence Alignment)."
+    echo "Installing kalign via conda..."
+    conda install -c bioconda kalign -y
+    if command -v kalign &> /dev/null; then
+        echo "✓ kalign installed."
     else
-        echo "Installing kalign via conda..."
-        conda install -c bioconda kalign -y
-        if command -v kalign &> /dev/null; then
-            echo "✓ kalign installed."
-        else
-            echo "WARNING: kalign installation failed. You may need to install it manually."
-        fi
+        echo "WARNING: kalign installation failed. You may need to install it manually."
     fi
 fi
 
@@ -450,6 +386,7 @@ mkdir -p data/inputs/fasta
 mkdir -p data/outputs/rfdiffusion
 mkdir -p data/outputs/proteinmpnn
 mkdir -p data/outputs/chai1
+mkdir -p data/outputs/boltz
 mkdir -p data/outputs/colabfold
 mkdir -p data/outputs/phase3_fast
 mkdir -p data/candidates
@@ -466,13 +403,17 @@ echo "Installed components:"
 echo "  ✓ RFdiffusion (SE3nv environment)"
 echo "  ✓ Main pipeline (.venv)"
 echo "  ✓ Chai-1"
-echo "  ✓ Boltz (.boltz_venv)"
+echo "  ✓ Boltz (boltz_env environment, Python 3.12)"
 echo "  ✓ PyRosetta"
 echo "  ✓ System dependencies (kalign, DockQ)"
+echo "  ✓ BioPython (for Phase 3 metrics)"
 echo ""
 echo "Next steps:"
 echo "1. Activate the main environment: source .venv/bin/activate"
 echo "2. Test RFdiffusion: bash scripts/test_rfdiffusion_setup.sh"
 echo "3. Verify installation: bash scripts/verify_installation.sh"
 echo "4. Run the pipeline: python main.py --target-pdb target.pdb --interactive"
+echo ""
+echo "Note: To use RFdiffusion, activate SE3nv: conda activate SE3nv"
+echo "      To use Boltz, activate boltz_env: conda activate boltz_env"
 echo ""
