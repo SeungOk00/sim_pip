@@ -7,7 +7,7 @@ from typing import Dict, Any
 
 
 DEFAULT_CONFIG = {
-    "project_root": "/home01/hpc194a02/test/sim_pip",
+    "project_root": str(Path(__file__).resolve().parent.parent),  # Auto-detect project root
     
     # Paths
     "paths": {
@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
     # Phase 2: Generation
     "phase2": {
         "rfdiffusion": {
-            "path": "/home01/hpc194a02/test/sim_pip/tools/rfdiffusion",
+            "path": str(Path(__file__).resolve().parent.parent / "tools/rfdiffusion"),
             "de_novo_T": 50,
             "refinement_T": 15,
             "num_designs": 1,
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
             "max_refinement_iterations": 3  # Renumbering 구현 완료
         },
         "proteinmpnn": {
-            "path": "/home01/hpc194a02/test/sim_pip/tools/proteinmpnn",
+            "path": str(Path(__file__).resolve().parent.parent / "tools/proteinmpnn"),
             "num_seq_per_target": 10,
             "sampling_temps": [0.1],
             "batch_size": 1,
@@ -48,14 +48,14 @@ DEFAULT_CONFIG = {
     "phase3_fast": {
         "chai": {
             "path": "",
-            "venv_path": "/home01/hpc194a02/test/sim_pip/.venv",
+            "venv_path": str(Path(__file__).resolve().parent.parent / ".venv"),
             "command_template": "chai-lab fold --use-msa-server {input_path} {output_dir}",
             "output_file": ""
         },
         "boltz": {
             "enabled": True,
             "path": "",
-            "venv_path": "/home01/hpc194a02/test/sim_pip/.boltz_venv",
+            "venv_path": str(Path(__file__).resolve().parent.parent / ".boltz_venv"),
             "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
             "output_file": ""
         },
@@ -70,7 +70,7 @@ DEFAULT_CONFIG = {
     # Phase 3-B: Deep Validation
     "phase3_deep": {
         "colabfold": {
-            "path": "/home01/hpc194a02/test/sim_pip/tools/colabfold"
+            "path": str(Path(__file__).resolve().parent.parent / "tools/colabfold")
         },
         "gates": {
             "backbone_rmsd_threshold": 2.0,      # RFdiffusion 백본 vs ColabFold 바인더 RMSD

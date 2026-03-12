@@ -36,31 +36,45 @@ class ToolRunner:
         
         # Setup environment
         import os
+        import sys
         run_env = os.environ.copy()
         if env:
             run_env.update(env)
+        
+        # Use current Python interpreter if command starts with 'python'
+        # But not if it's part of a conda run command
+        if command[0] == "python" and len(command) > 0:
+            command[0] = sys.executable
+        elif command[0] == "conda" and "run" in command:
+            # For conda run, don't replace python - conda will handle it
+            pass
         
         for attempt in range(retry_count + 1):
             try:
                 result = subprocess.run(
                     command,
-                    cwd=cwd,
+                    cwd=str(cwd) if cwd else None,
                     capture_output=True,
                     text=True,
                     timeout=3600,  # 1 hour timeout
-                    env=run_env
+                    env=run_env,
+                    shell=False  # Keep shell=False for security
                 )
                 
                 if result.returncode == 0:
                     logger.info(f"Command succeeded on attempt {attempt + 1}")
                     return result.returncode, result.stdout, result.stderr
                 else:
-                    logger.warning(f"Command failed on attempt {attempt + 1}: {result.stderr}")
+                    logger.warning(f"Command failed on attempt {attempt + 1}")
+                    logger.warning(f"STDERR: {result.stderr[:2000]}")  # Increased limit
+                    logger.warning(f"STDOUT: {result.stdout[:2000]}")
                     
             except subprocess.TimeoutExpired:
                 logger.error(f"Command timed out on attempt {attempt + 1}")
             except Exception as e:
                 logger.error(f"Command error on attempt {attempt + 1}: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
             
             if attempt < retry_count:
                 logger.info(f"Retrying... ({attempt + 1}/{retry_count})")
@@ -75,8 +89,30 @@ class ToolRunner:
 class RFdiffusionRunner(ToolRunner):
     """RFdiffusion tool wrapper"""
     
-    def __init__(self, tool_path: str, dry_run: bool = False):
+    def __init__(self, tool_path: str, conda_env: str = "SE3nv", dry_run: bool = False):
         super().__init__("RFdiffusion", tool_path, dry_run)
+        self.conda_env = conda_env
+        
+    def _get_conda_python(self) -> str:
+        """Get Python executable from conda environment"""
+        import os
+        import platform
+        
+        # Try to find conda environment
+        conda_base = os.environ.get('CONDA_PREFIX', os.path.expanduser('~/miniconda3'))
+        
+        if platform.system() == 'Windows':
+            python_path = os.path.join(conda_base, 'envs', self.conda_env, 'python.exe')
+        else:
+            python_path = os.path.join(conda_base, 'envs', self.conda_env, 'bin', 'python')
+        
+        # Check if conda python exists
+        if os.path.exists(python_path):
+            return python_path
+        
+        # Fallback: try to use conda run
+        logger.warning(f"Conda Python not found at {python_path}, will try 'conda run'")
+        return None
     
     def generate_binder(self, target_pdb: Path, target_chain: str,
                        target_residues: Optional[str], hotspot_residues: List[int],
@@ -106,16 +142,41 @@ class RFdiffusionRunner(ToolRunner):
         # Format optional fields only when provided.
         hotspot_str = ",".join([f"{target_chain}{r}" for r in hotspot_residues]) if hotspot_residues else ""
         
-        command = [
-            "python",
-            str(self.tool_path / "scripts/run_inference.py"),
-            f"inference.input_pdb={target_pdb}",
-            f"inference.output_prefix={output_dir}/{output_prefix}",
-            f"inference.num_designs={num_designs}",
-            f"diffuser.T={T}",
-            f"denoiser.noise_scale_ca={noise_scale}",
-            f"denoiser.noise_scale_frame={noise_scale}"
-        ]
+        # Convert paths to POSIX style (forward slashes) for compatibility
+        # Use relative paths from project root if possible
+        from pathlib import Path as PathlibPath
+        
+        # Convert to absolute path first, then to POSIX string with forward slashes
+        target_pdb_posix = str(PathlibPath(target_pdb).resolve()).replace('\\', '/')
+        output_prefix_posix = str(PathlibPath(output_dir / output_prefix).resolve()).replace('\\', '/')
+        tool_script_posix = str((self.tool_path / "scripts/run_inference.py").resolve()).replace('\\', '/')
+        
+        # Get conda Python or use conda run
+        conda_python = self._get_conda_python()
+        
+        if conda_python:
+            command = [
+                conda_python,
+                tool_script_posix,
+                f"inference.input_pdb={target_pdb_posix}",
+                f"inference.output_prefix={output_prefix_posix}",
+                f"inference.num_designs={num_designs}",
+                f"diffuser.T={T}",
+                f"denoiser.noise_scale_ca={noise_scale}",
+                f"denoiser.noise_scale_frame={noise_scale}"
+            ]
+        else:
+            # Fallback: use conda run
+            command = [
+                "conda", "run", "-n", self.conda_env, "python",
+                tool_script_posix,
+                f"inference.input_pdb={target_pdb_posix}",
+                f"inference.output_prefix={output_prefix_posix}",
+                f"inference.num_designs={num_designs}",
+                f"diffuser.T={T}",
+                f"denoiser.noise_scale_ca={noise_scale}",
+                f"denoiser.noise_scale_frame={noise_scale}"
+            ]
         if target_residues and binder_length:
             contig_str = f"{target_chain}{target_residues}/0 {binder_length}"
             command.append(f"contigmap.contigs=[{contig_str}]")
@@ -386,11 +447,17 @@ class RFdiffusionRunner(ToolRunner):
         binder_len = binder_info['length']
         contig_str = f"{target_range}/0 {binder_len}-{binder_len}"
         
+        # Convert paths to POSIX style (forward slashes)
+        from pathlib import Path as PathlibPath
+        input_pdb_posix = str(PathlibPath(input_pdb).resolve()).replace('\\', '/')
+        output_prefix_posix = str(PathlibPath(output_dir / "refined").resolve()).replace('\\', '/')
+        tool_script_posix = str((self.tool_path / "scripts/run_inference.py").resolve()).replace('\\', '/')
+        
         command = [
             "python",
-            str(self.tool_path / "scripts/run_inference.py"),
-            f"inference.input_pdb={input_pdb}",
-            f"inference.output_prefix={output_dir}/refined",
+            tool_script_posix,
+            f"inference.input_pdb={input_pdb_posix}",
+            f"inference.output_prefix={output_prefix_posix}",
             f"inference.num_designs=1",
             f"diffuser.partial_T={T}",
             f"diffuser.T=50",
@@ -447,11 +514,17 @@ class ProteinMPNNRunner(ToolRunner):
         assigned_jsonl = output_dir / "assigned_pdbs.jsonl"
         default_fixed_jsonl = output_dir / "fixed_positions.jsonl"
 
+        # Convert paths to POSIX style (forward slashes)
+        from pathlib import Path as PathlibPath
+        input_dir_posix = str(PathlibPath(input_dir).resolve()).replace('\\', '/')
+        parsed_jsonl_posix = str(PathlibPath(parsed_jsonl).resolve()).replace('\\', '/')
+        assigned_jsonl_posix = str(PathlibPath(assigned_jsonl).resolve()).replace('\\', '/')
+
         parse_cmd = [
             "python",
             str(self.tool_path / "helper_scripts/parse_multiple_chains.py"),
-            f"--input_path={input_dir}",
-            f"--output_path={parsed_jsonl}",
+            f"--input_path={input_dir_posix}",
+            f"--output_path={parsed_jsonl_posix}",
         ]
         exit_code, _, stderr = self.run(parse_cmd, cwd=self.tool_path)
         if exit_code != 0:
@@ -460,8 +533,8 @@ class ProteinMPNNRunner(ToolRunner):
         assign_cmd = [
             "python",
             str(self.tool_path / "helper_scripts/assign_fixed_chains.py"),
-            f"--input_path={parsed_jsonl}",
-            f"--output_path={assigned_jsonl}",
+            f"--input_path={parsed_jsonl_posix}",
+            f"--output_path={assigned_jsonl_posix}",
             f"--chain_list={design_chains}",
         ]
         exit_code, _, stderr = self.run(assign_cmd, cwd=self.tool_path)
@@ -479,14 +552,17 @@ class ProteinMPNNRunner(ToolRunner):
             with open(fixed_jsonl_path, "w") as f:
                 f.write(json.dumps(fixed_dict) + "\n")
 
+        fixed_jsonl_posix = str(PathlibPath(fixed_jsonl_path).resolve()).replace('\\', '/')
+        output_dir_posix = str(PathlibPath(output_dir).resolve()).replace('\\', '/')
+
         temp_str = " ".join(str(t) for t in temps)
         command = [
             "python",
             str(self.tool_path / "protein_mpnn_run.py"),
-            f"--jsonl_path={parsed_jsonl}",
-            f"--chain_id_jsonl={assigned_jsonl}",
-            f"--fixed_positions_jsonl={fixed_jsonl_path}",
-            f"--out_folder={output_dir}",
+            f"--jsonl_path={parsed_jsonl_posix}",
+            f"--chain_id_jsonl={assigned_jsonl_posix}",
+            f"--fixed_positions_jsonl={fixed_jsonl_posix}",
+            f"--out_folder={output_dir_posix}",
             f"--num_seq_per_target={num_seqs}",
             f"--sampling_temp={temp_str}",
             f"--seed={seed}",
@@ -537,6 +613,13 @@ class ChaiRunner(ToolRunner):
         output_dir.mkdir(parents=True, exist_ok=True)
         resolved_input = input_path if input_path is not None else binder_fasta
 
+        # Convert paths to POSIX style (forward slashes)
+        from pathlib import Path as PathlibPath
+        resolved_input_posix = str(PathlibPath(resolved_input).resolve()).replace('\\', '/')
+        output_dir_posix = str(PathlibPath(output_dir).resolve()).replace('\\', '/')
+        target_pdb_posix = str(PathlibPath(target_pdb).resolve()).replace('\\', '/')
+        binder_fasta_posix = str(PathlibPath(binder_fasta).resolve()).replace('\\', '/')
+
         commands = []
         
         # Use venv Python if available
@@ -550,10 +633,10 @@ class ChaiRunner(ToolRunner):
         if command_template:
             # Replace 'chai-lab' in template with venv chai-lab
             cmd_str = command_template.format(
-                target_pdb=target_pdb,
-                binder_fasta=binder_fasta,
-                input_path=resolved_input,
-                output_dir=output_dir,
+                target_pdb=target_pdb_posix,
+                binder_fasta=binder_fasta_posix,
+                input_path=resolved_input_posix,
+                output_dir=output_dir_posix,
             )
             # Replace first occurrence of 'chai-lab' with venv path
             if cmd_str.startswith("chai-lab "):
@@ -562,8 +645,8 @@ class ChaiRunner(ToolRunner):
         
         # Try venv chai-lab first, then python -m
         commands.extend([
-            [chai_exe, "fold", str(resolved_input), str(output_dir)],
-            [python_exe, "-m", "chai_lab.main", "fold", str(resolved_input), str(output_dir)],
+            [chai_exe, "fold", resolved_input_posix, output_dir_posix],
+            [python_exe, "-m", "chai_lab.main", "fold", resolved_input_posix, output_dir_posix],
         ])
 
         last_err = ""
@@ -627,6 +710,14 @@ class BoltzRunner(ToolRunner):
         """Predict complex structure with Boltz."""
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # Convert paths to POSIX style (forward slashes)
+        from pathlib import Path as PathlibPath
+        target_pdb_posix = str(PathlibPath(target_pdb).resolve()).replace('\\', '/')
+        binder_fasta_posix = str(PathlibPath(binder_fasta).resolve()).replace('\\', '/')
+        output_dir_posix = str(PathlibPath(output_dir).resolve()).replace('\\', '/')
+        input_path_resolved = input_path if input_path is not None else binder_fasta
+        input_path_posix = str(PathlibPath(input_path_resolved).resolve()).replace('\\', '/')
+        
         # Use Boltz venv Python if specified
         if self.venv_path:
             venv_python = self.venv_path / "bin" / "python"
@@ -634,10 +725,10 @@ class BoltzRunner(ToolRunner):
                 raise RuntimeError(f"Boltz venv Python not found: {venv_python}")
             # Replace 'boltz' command with venv python + module
             cmd = command_template.format(
-                target_pdb=target_pdb,
-                binder_fasta=binder_fasta,
-                output_dir=output_dir,
-                input_path=(input_path if input_path is not None else binder_fasta),
+                target_pdb=target_pdb_posix,
+                binder_fasta=binder_fasta_posix,
+                output_dir=output_dir_posix,
+                input_path=input_path_posix,
             )
             # Replace 'boltz' with 'python -m boltz.main'
             if cmd.startswith('boltz '):
@@ -645,10 +736,10 @@ class BoltzRunner(ToolRunner):
             command = shlex.split(cmd)
         else:
             cmd = command_template.format(
-                target_pdb=target_pdb,
-                binder_fasta=binder_fasta,
-                output_dir=output_dir,
-                input_path=(input_path if input_path is not None else binder_fasta),
+                target_pdb=target_pdb_posix,
+                binder_fasta=binder_fasta_posix,
+                output_dir=output_dir_posix,
+                input_path=input_path_posix,
             )
             command = shlex.split(cmd)
 

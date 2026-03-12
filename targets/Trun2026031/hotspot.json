@@ -1,6 +1,6 @@
 {
   "target_id": "Trun2026031",
-  "target_pdb_path": "/home01/hpc194a02/test/sim_pip/data/inputs/pdb/2026-03-10/20-20-18/target.pdb",
+  "target_pdb_path": "C:\\project\\sim_pip\\data\\inputs\\pdb\\2026-03-12\\18-04-50\\target.pdb",
   "chain_id": "A",
   "pocket_definition": {
     "type": "residue_list",

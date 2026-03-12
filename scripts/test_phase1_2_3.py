@@ -1,14 +1,38 @@
 #!/usr/bin/env python3
 """
 Test script for Phase 1-2-3 of the binder design pipeline
+
+Usage:
+    # Activate virtual environment first
+    source .venv/bin/activate          # Linux/macOS
+    .venv\\Scripts\\activate           # Windows
+    
+    # Then run the script from project root
+    python scripts/test_phase1_2_3.py
 """
 import sys
+import os
 import logging
 from pathlib import Path
-
 # Add project root to path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
+
+# Check if virtual environment is activated
+try:
+    import yaml
+except ImportError:
+    print("\n" + "=" * 80)
+    print("ERROR: Required modules not found!")
+    print("=" * 80)
+    print("\nIt looks like the virtual environment is not activated.")
+    print("\nPlease activate the virtual environment first:")
+    print("  On Linux/macOS: source .venv/bin/activate")
+    print("  On Windows:     .venv\\Scripts\\activate")
+    print("\nOr install requirements:")
+    print("  pip install -r requirements.txt")
+    print("=" * 80 + "\n")
+    sys.exit(1)
 
 from pipeline.config import Config
 from pipeline.models import PipelineState
@@ -50,20 +74,51 @@ def test_phase1_2_3():
     
     phase1 = Phase1TargetDiscovery(config.to_dict())
     
-    # Test with the target.pdb from data/inputs directory
-    # Note: This file was moved during folder restructuring
-    target_pdb_path = project_root / "data/inputs/pdb/2026-03-10/18-23-25/target.pdb"
+    # Test with the target.pdb from inputs directory
+    # Note: You need to provide a target PDB file
+    target_pdb_path = project_root / "inputs/pdb/target.pdb"
     
-    # Fallback: Check if file exists, otherwise use any available target.pdb
+    # Ensure directory exists
+    target_pdb_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Download target PDB if not exists
     if not target_pdb_path.exists():
         logger.warning(f"Target PDB not found at {target_pdb_path}")
-        # Try to find any target.pdb in data/inputs/pdb
-        pdb_files = list((project_root / "data/inputs/pdb").rglob("target.pdb"))
-        if pdb_files:
-            target_pdb_path = pdb_files[0]
-            logger.info(f"Using alternative target PDB: {target_pdb_path}")
-        else:
-            raise FileNotFoundError("No target.pdb found in data/inputs/pdb/")
+        logger.info("Attempting to download test target (4IBM - Insulin Receptor)...")
+        
+        try:
+            import urllib.request
+            pdb_url = "https://files.rcsb.org/download/4IBM.pdb"
+            logger.info(f"Downloading from {pdb_url}...")
+            urllib.request.urlretrieve(pdb_url, str(target_pdb_path))
+            logger.info(f"✓ Downloaded target.pdb successfully to {target_pdb_path}")
+        except Exception as e:
+            logger.warning(f"Failed to download: {e}")
+            logger.info("Trying to use example PDB files from tools/proteinmpnn/inputs/...")
+            
+            # Try to find any .pdb file in inputs/pdb or use example
+            pdb_files = list((project_root / "inputs/pdb").rglob("*.pdb"))
+            if pdb_files:
+                target_pdb_path = pdb_files[0]
+                logger.info(f"Using alternative PDB file: {target_pdb_path}")
+            else:
+                # Try to copy from example files
+                example_pdbs = list((project_root / "tools/proteinmpnn/inputs").rglob("*.pdb"))
+                if example_pdbs:
+                    import shutil
+                    example_pdb = example_pdbs[0]
+                    shutil.copy(example_pdb, target_pdb_path)
+                    logger.info(f"✓ Copied example PDB: {example_pdb.name}")
+                else:
+                    logger.error("\n" + "=" * 80)
+                    logger.error("ERROR: No PDB file found!")
+                    logger.error("=" * 80)
+                    logger.error("\nPlease provide a target PDB file:")
+                    logger.error(f"  1. Place your PDB file at: inputs/pdb/target.pdb")
+                    logger.error(f"  2. Or download manually:")
+                    logger.error(f"     wget https://files.rcsb.org/download/4IBM.pdb -O inputs/pdb/target.pdb")
+                    logger.error("=" * 80 + "\n")
+                    raise FileNotFoundError("No target.pdb found and unable to download")
     
     chain_id = "A"
     hotspot_residues = [982, 990, 995]  # Insulin receptor kinase domain hotspots

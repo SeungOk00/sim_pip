@@ -355,43 +355,303 @@ class Phase3ScreeningAndValidation:
 
     def _calculate_backbone_rmsd(self, ref_pdb: Path, model_pdb: Path, chain_id: str = 'B') -> float:
         """
-        Calculate backbone RMSD between reference (RFdiffusion) and model (ColabFold) for specific chain.
-        Placeholder: returns random value for now.
-        TODO: Implement using BioPython or similar library.
+        Calculate C-alpha RMSD between reference (RFdiffusion) and model (ColabFold) for specific chain.
+        Uses BioPython for structural alignment and RMSD calculation.
         """
-        import random
-        random.seed(hash(str(ref_pdb) + str(model_pdb) + chain_id))
-        return random.uniform(0.5, 2.5)
+        try:
+            from Bio.PDB import PDBParser, Superimposer
+            from Bio.PDB.Polypeptide import is_aa
+            
+            parser = PDBParser(QUIET=True)
+            ref_structure = parser.get_structure('reference', str(ref_pdb))
+            model_structure = parser.get_structure('model', str(model_pdb))
+            
+            # Extract C-alpha atoms from specified chain
+            ref_ca_atoms = []
+            model_ca_atoms = []
+            
+            # Get reference chain C-alpha atoms
+            for model in ref_structure:
+                for chain in model:
+                    if chain.id == chain_id:
+                        for residue in chain:
+                            if is_aa(residue) and 'CA' in residue:
+                                ref_ca_atoms.append(residue['CA'])
+            
+            # Get model chain C-alpha atoms
+            for model in model_structure:
+                for chain in model:
+                    if chain.id == chain_id:
+                        for residue in chain:
+                            if is_aa(residue) and 'CA' in residue:
+                                model_ca_atoms.append(residue['CA'])
+            
+            if not ref_ca_atoms or not model_ca_atoms:
+                logger.warning(f"No C-alpha atoms found for chain {chain_id}")
+                return 999.0
+            
+            if len(ref_ca_atoms) != len(model_ca_atoms):
+                logger.warning(f"Chain length mismatch: ref={len(ref_ca_atoms)}, model={len(model_ca_atoms)}")
+                # Use the shorter length for alignment
+                min_len = min(len(ref_ca_atoms), len(model_ca_atoms))
+                ref_ca_atoms = ref_ca_atoms[:min_len]
+                model_ca_atoms = model_ca_atoms[:min_len]
+            
+            # Perform superimposition and calculate RMSD
+            super_imposer = Superimposer()
+            super_imposer.set_atoms(ref_ca_atoms, model_ca_atoms)
+            rmsd = super_imposer.rms
+            
+            logger.info(f"    Backbone RMSD (C-alpha, chain {chain_id}): {rmsd:.2f} Å")
+            return float(rmsd)
+            
+        except ImportError:
+            logger.error("BioPython not installed. Install with: pip install biopython")
+            raise
+        except Exception as e:
+            logger.error(f"Error calculating backbone RMSD: {str(e)}")
+            raise
 
     def _calculate_interface_pae(self, pdb: Path, target_chain: str = 'A', binder_chain: str = 'B') -> float:
         """
         Calculate average PAE for interface residues between target and binder.
-        Placeholder: returns random value for now.
-        TODO: Parse ColabFold PAE matrix JSON and calculate interface PAE.
+        Reads PAE matrix from ColabFold JSON output file.
+        Interface residues are defined as residues within 8Å of the other chain.
         """
-        import random
-        random.seed(hash(str(pdb) + target_chain + binder_chain))
-        return random.uniform(2.0, 8.0)
+        try:
+            from Bio.PDB import PDBParser, NeighborSearch
+            from Bio.PDB.Polypeptide import is_aa
+            import json
+            
+            # Try to find corresponding JSON file with PAE data
+            pae_json = None
+            possible_json_files = [
+                pdb.parent / "predicted_aligned_error_v1.json",
+                pdb.parent / "pae.json",
+                pdb.with_suffix('.json'),
+            ]
+            
+            for json_file in possible_json_files:
+                if json_file.exists():
+                    pae_json = json_file
+                    break
+            
+            if not pae_json:
+                logger.warning(f"PAE JSON file not found for {pdb}. Searching parent directory...")
+                # Search for any JSON file in the same directory
+                json_files = list(pdb.parent.glob("*.json"))
+                if json_files:
+                    pae_json = json_files[0]
+                    logger.info(f"    Using JSON file: {pae_json.name}")
+            
+            if not pae_json:
+                logger.warning("No PAE JSON file found, returning fallback value")
+                return 5.0
+            
+            # Parse PDB to find interface residues
+            parser = PDBParser(QUIET=True)
+            structure = parser.get_structure('complex', str(pdb))
+            
+            # Get all atoms from each chain
+            target_atoms = []
+            binder_atoms = []
+            target_residues = []
+            binder_residues = []
+            
+            for model in structure:
+                for chain in model:
+                    if chain.id == target_chain:
+                        for residue in chain:
+                            if is_aa(residue):
+                                target_residues.append(residue)
+                                for atom in residue:
+                                    target_atoms.append(atom)
+                    elif chain.id == binder_chain:
+                        for residue in chain:
+                            if is_aa(residue):
+                                binder_residues.append(residue)
+                                for atom in residue:
+                                    binder_atoms.append(atom)
+            
+            if not target_atoms or not binder_atoms:
+                logger.warning(f"Missing atoms for chains {target_chain} or {binder_chain}")
+                return 999.0
+            
+            # Find interface residues (within 8Å)
+            ns = NeighborSearch(target_atoms)
+            interface_binder_residues = set()
+            
+            for atom in binder_atoms:
+                close_atoms = ns.search(atom.coord, 8.0, level='A')
+                if close_atoms:
+                    interface_binder_residues.add(atom.get_parent())
+            
+            if not interface_binder_residues:
+                logger.warning("No interface residues found")
+                return 999.0
+            
+            # Read PAE matrix from JSON
+            with open(pae_json, 'r') as f:
+                pae_data = json.load(f)
+            
+            # Extract PAE matrix (format may vary)
+            pae_matrix = None
+            if 'pae' in pae_data:
+                pae_matrix = pae_data['pae']
+            elif 'predicted_aligned_error' in pae_data:
+                pae_matrix = pae_data['predicted_aligned_error']
+            elif isinstance(pae_data, list) and len(pae_data) > 0:
+                if isinstance(pae_data[0], dict) and 'predicted_aligned_error' in pae_data[0]:
+                    pae_matrix = pae_data[0]['predicted_aligned_error']
+            
+            if not pae_matrix:
+                logger.warning("PAE matrix not found in JSON file")
+                return 5.0
+            
+            # Calculate interface PAE
+            n_target = len(target_residues)
+            n_binder = len(binder_residues)
+            
+            interface_pae_values = []
+            for binder_res in interface_binder_residues:
+                binder_idx = binder_residues.index(binder_res)
+                for target_idx in range(n_target):
+                    # PAE from target to binder interface
+                    pae_val = pae_matrix[target_idx][n_target + binder_idx]
+                    interface_pae_values.append(pae_val)
+            
+            if not interface_pae_values:
+                logger.warning("No interface PAE values calculated")
+                return 999.0
+            
+            avg_interface_pae = sum(interface_pae_values) / len(interface_pae_values)
+            logger.info(f"    Interface PAE: {avg_interface_pae:.2f} Å")
+            return float(avg_interface_pae)
+            
+        except ImportError:
+            logger.error("BioPython not installed. Install with: pip install biopython")
+            raise
+        except Exception as e:
+            logger.warning(f"Error calculating interface PAE: {str(e)}, returning fallback value")
+            return 5.0
 
     def _calculate_chain_plddt(self, pdb: Path, chain_id: str = 'B') -> float:
         """
         Calculate average pLDDT for a specific chain.
-        Placeholder: returns random value for now.
-        TODO: Parse pLDDT from ColabFold output (B-factor column in PDB).
+        pLDDT values are stored in the B-factor column of ColabFold output PDB files.
         """
-        import random
-        random.seed(hash(str(pdb) + chain_id + "plddt"))
-        return random.uniform(60.0, 95.0)
+        try:
+            from Bio.PDB import PDBParser
+            from Bio.PDB.Polypeptide import is_aa
+            
+            parser = PDBParser(QUIET=True)
+            structure = parser.get_structure('complex', str(pdb))
+            
+            plddt_values = []
+            for model in structure:
+                for chain in model:
+                    if chain.id == chain_id:
+                        for residue in chain:
+                            if is_aa(residue):
+                                # pLDDT is stored in B-factor column
+                                for atom in residue:
+                                    plddt_values.append(atom.get_bfactor())
+                                    break  # Only need one atom per residue
+            
+            if not plddt_values:
+                logger.warning(f"No pLDDT values found for chain {chain_id}")
+                return 0.0
+            
+            avg_plddt = sum(plddt_values) / len(plddt_values)
+            logger.info(f"    Binder pLDDT (chain {chain_id}): {avg_plddt:.1f}")
+            return float(avg_plddt)
+            
+        except ImportError:
+            logger.error("BioPython not installed. Install with: pip install biopython")
+            raise
+        except Exception as e:
+            logger.error(f"Error calculating chain pLDDT: {str(e)}")
+            raise
 
     def _calculate_iptm(self, pdb: Path) -> float:
         """
-        Calculate interface pTM score.
-        Placeholder: returns random value for now.
-        TODO: Parse from ColabFold JSON output.
+        Calculate interface pTM (ipTM) score from ColabFold JSON output.
+        ipTM measures the predicted accuracy of the interface structure.
         """
-        import random
-        random.seed(hash(str(pdb) + "iptm"))
-        return random.uniform(0.4, 0.9)
+        try:
+            import json
+            
+            # Try to find corresponding JSON file with ipTM data
+            iptm_json = None
+            possible_json_files = [
+                pdb.parent / "predicted_aligned_error_v1.json",
+                pdb.parent / "scores.json",
+                pdb.parent / "ranking_debug.json",
+                pdb.with_suffix('.json'),
+            ]
+            
+            for json_file in possible_json_files:
+                if json_file.exists():
+                    iptm_json = json_file
+                    break
+            
+            if not iptm_json:
+                logger.warning(f"ipTM JSON file not found for {pdb}. Searching parent directory...")
+                # Search for any JSON file in the same directory
+                json_files = list(pdb.parent.glob("*.json"))
+                if json_files:
+                    iptm_json = json_files[0]
+                    logger.info(f"    Using JSON file: {iptm_json.name}")
+            
+            if not iptm_json:
+                logger.warning("No ipTM JSON file found, returning fallback value")
+                return 0.5
+            
+            # Read ipTM from JSON
+            with open(iptm_json, 'r') as f:
+                data = json.load(f)
+            
+            # Extract ipTM (format may vary)
+            iptm = None
+            
+            # Common ColabFold format
+            if 'iptm' in data:
+                iptm = data['iptm']
+            elif 'iptm+ptm' in data:
+                # Sometimes only combined score is available
+                iptm = data['iptm+ptm']
+                logger.info("    Using iptm+ptm score as fallback")
+            
+            # Alternative nested formats
+            if iptm is None and isinstance(data, list) and len(data) > 0:
+                if isinstance(data[0], dict):
+                    if 'iptm' in data[0]:
+                        iptm = data[0]['iptm']
+                    elif 'iptm+ptm' in data[0]:
+                        iptm = data[0]['iptm+ptm']
+            
+            # Check for model-specific scores
+            if iptm is None:
+                for key in data.keys():
+                    if 'model' in key.lower() or 'rank' in key.lower():
+                        if isinstance(data[key], dict):
+                            if 'iptm' in data[key]:
+                                iptm = data[key]['iptm']
+                                break
+                            elif 'iptm+ptm' in data[key]:
+                                iptm = data[key]['iptm+ptm']
+                                break
+            
+            if iptm is None:
+                logger.warning("ipTM not found in JSON file, returning fallback value")
+                return 0.5
+            
+            logger.info(f"    ipTM: {iptm:.3f}")
+            return float(iptm)
+            
+        except Exception as e:
+            logger.warning(f"Error calculating ipTM: {str(e)}, returning fallback value")
+            return 0.5
 
     def _calculate_rmsd(self, pdb1: Path, pdb2: Path) -> float:
         """Deprecated: Use _calculate_backbone_rmsd instead."""
