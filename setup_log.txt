@@ -1,0 +1,15 @@
+==========================================
+Protein Binder Design Pipeline Setup (Linux)
+==========================================
+
+[1/10] Checking system requirements...
+
+✓ GPU detected:
+NVIDIA GeForce RTX 4050 Laptop GPU
+✓ Python version: Python 3.10.12
+
+[2/10] Installing Miniconda (if not already installed)...
+
+Conda not found. Installing Miniconda...
+Miniconda directory already exists at /home/so/miniconda3
+✓ Conda is accessible: conda 26.1.1

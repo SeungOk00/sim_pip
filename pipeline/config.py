@@ -42,18 +42,19 @@ DEFAULT_CONFIG = {
             "design_chains": "B",
             "fixed_positions_jsonl": ""
         },
-        "max_candidates_per_target": 10
+        "max_candidates_per_target": 3
     },
     # Phase 3-A: Fast Screening
     "phase3_fast": {
         "chai": {
+            "enabled": True,  # Use GPU by default for Chai-1
             "path": "",
             "venv_path": str(Path(__file__).resolve().parent.parent / ".venv"),
-            "command_template": "chai-lab fold --use-msa-server {input_path} {output_dir}",
+            "command_template": "chai-lab fold --use-msa-server --use-templates-server --device cuda:0 {input_path} {output_dir}",
             "output_file": ""
         },
         "boltz": {
-            "enabled": True,
+            "enabled": False,  # Set to True when GPU is available
             "path": "",
             "venv_path": str(Path(__file__).resolve().parent.parent / ".boltz_venv"),
             "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
@@ -102,7 +103,7 @@ DEFAULT_CONFIG = {
             "population_size": 100,
             "generations": 50
         },
-        "final_selection": 96
+        "final_selection": 3
     },
     
     # Phase 5: Lab Automation
@@ -174,5 +175,4 @@ class Config:
     def to_dict(self) -> Dict:
         """Get full configuration as dictionary"""
         return self.config.copy()
-
 

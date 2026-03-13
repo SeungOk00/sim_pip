@@ -10,7 +10,7 @@ import re
 
 from ..models import DesignCandidate, PipelineState
 from ..utils.tool_wrapper import ChaiRunner, BoltzRunner
-from ..utils.file_ops import ensure_dir
+from ..utils.file_ops import ensure_dir, get_date_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +48,14 @@ class Phase3ScreeningAndValidation:
         logger.info("=" * 80)
 
         project_root = Path(self.config["project_root"])
-        now = datetime.now()
-        date_dir = now.strftime("%Y-%m-%d")
-        time_dir = now.strftime("%H-%M-%S")
         outputs_root = project_root / self.config["paths"]["outputs"]
+        date_dir = get_date_dir()
 
         logger.info("\n" + "=" * 80)
         logger.info("PHASE 3-A: Fast Screening")
         logger.info("=" * 80)
 
-        fast_dir = outputs_root / "phase3_fast" / date_dir / time_dir
+        fast_dir = outputs_root / "phase3_fast" / date_dir / state.run_id
         ensure_dir(fast_dir)
 
         generated_candidates = state.get_candidates_by_stage("generated")
@@ -78,7 +76,7 @@ class Phase3ScreeningAndValidation:
         logger.info("PHASE 3-B: Deep Validation")
         logger.info("=" * 80)
 
-        deep_dir = outputs_root / "colabfold" / date_dir / time_dir / "phase3_deep"
+        deep_dir = outputs_root / "colabfold" / date_dir / state.run_id / "phase3_deep"
         ensure_dir(deep_dir)
 
         logger.info(f"Deep validating {len(passed)} candidates")
@@ -126,49 +124,67 @@ class Phase3ScreeningAndValidation:
             logger.info(f"  target pdb: {target_pdb}")
             logger.info(f"  binder fasta: {fasta_path}")
 
-            # Create Chai-1 directories
-            project_root = Path(self.config["project_root"])
-            outputs_root = project_root / self.config["paths"]["outputs"]
-            now = datetime.now()
-            date_dir = now.strftime("%Y-%m-%d")
-            time_dir = now.strftime("%H-%M-%S")
-            # Add microseconds to ensure unique directory for each attempt
-            unique_id = now.strftime("%H-%M-%S-%f")
-            
-            # Chai input file in temp location
-            chai_input_dir = outputs_root / "temp_chai_input"
-            ensure_dir(chai_input_dir)
-            chai_input = chai_input_dir / f"{candidate.candidate_id}_{unique_id}_chai_input.fasta"
-            self._write_chai_fasta_input(
-                target_pdb=target_pdb,
-                target_chain=state.target.chain_id,
-                binder_sequence=binder_sequence,
-                out_fasta=chai_input,
-            )
-            
-            # Chai output directory (must be empty) - use unique_id for each attempt
-            chai_output_dir = outputs_root / "chai1" / date_dir / unique_id / candidate.candidate_id
-            
+            # Check if Chai-1 is enabled
             chai_cfg = self.fast_config.get("chai", {})
-            chai_pdb, chai_conf = self.chai.predict_complex(
-                target_pdb=target_pdb,
-                binder_fasta=fasta_path,
-                output_dir=chai_output_dir,
-                command_template=chai_cfg.get(
-                    "command_template",
-                    "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",
-                ),
-                input_path=chai_input,
-                output_file=chai_cfg.get("output_file", "predicted_complex.pdb"),
-            )
-            candidate.metrics.update(chai_conf)
-            candidate.complex_pdb_path = str(chai_pdb)
+            chai_enabled = chai_cfg.get("enabled", True)
+            
+            chai_pdb = None
+            chai_conf = {}
+            
+            if chai_enabled:
+                # Create Chai-1 directories
+                project_root = Path(self.config["project_root"])
+                outputs_root = project_root / self.config["paths"]["outputs"]
+                now = datetime.now()
+                date_dir = get_date_dir()
+                # Add microseconds to ensure unique directory for each attempt
+                unique_id = now.strftime("%H-%M-%S-%f")
+                
+                # Chai input file in temp location
+                chai_input_dir = outputs_root / "temp_chai_input"
+                ensure_dir(chai_input_dir)
+                chai_input = chai_input_dir / f"{candidate.candidate_id}_{unique_id}_chai_input.fasta"
+                self._write_chai_fasta_input(
+                    target_pdb=target_pdb,
+                    target_chain=state.target.chain_id,
+                    binder_sequence=binder_sequence,
+                    out_fasta=chai_input,
+                )
+                
+                # Chai output directory (must be empty) - use unique_id for each attempt
+                chai_output_dir = outputs_root / "chai1" / date_dir / state.run_id / unique_id / candidate.candidate_id
+                
+                logger.info(f"  Running Chai-1...")
+                chai_pdb, chai_conf = self.chai.predict_complex(
+                    target_pdb=target_pdb,
+                    binder_fasta=fasta_path,
+                    output_dir=chai_output_dir,
+                    command_template=chai_cfg.get(
+                        "command_template",
+                        "chai-lab fold --use-msa-server --use-templates-server {input_path} {output_dir}",
+                    ),
+                    input_path=chai_input,
+                    output_file=chai_cfg.get("output_file", "predicted_complex.pdb"),
+                )
+                candidate.metrics.update(chai_conf)
+                candidate.complex_pdb_path = str(chai_pdb)
+                logger.info(f"  ✓ Chai-1 complete")
+            else:
+                logger.info(f"  ⊘ Chai-1 disabled (GPU required)")
 
+            # Check if Boltz is enabled
+            boltz_cfg = self.fast_config.get("boltz", {})
+            boltz_enabled = boltz_cfg.get("enabled", True)
+            
             boltz_pdb = None
-            if self.boltz is not None:
-                boltz_cfg = self.fast_config.get("boltz", {})
+            if boltz_enabled and self.boltz is not None:
+                project_root = Path(self.config["project_root"])
+                date_dir = get_date_dir()
+                now = datetime.now()
+                unique_id = now.strftime("%H-%M-%S-%f")
+                
                 # Boltz output directory (similar to Chai structure)
-                boltz_output_dir = project_root / self.config['paths']['outputs'] / "boltz" / date_dir / unique_id / candidate.candidate_id
+                boltz_output_dir = project_root / self.config['paths']['outputs'] / "boltz" / date_dir / state.run_id / unique_id / candidate.candidate_id
                 ensure_dir(boltz_output_dir)
                 boltz_input = boltz_output_dir / "boltz_input.fasta"
                 self._write_boltz_fasta_input(
@@ -177,6 +193,8 @@ class Phase3ScreeningAndValidation:
                     binder_sequence=binder_sequence,
                     out_fasta=boltz_input,
                 )
+                
+                logger.info(f"  Running Boltz...")
                 boltz_pdb, boltz_conf = self.boltz.predict_complex(
                     target_pdb=target_pdb,
                     binder_fasta=fasta_path,
@@ -189,9 +207,13 @@ class Phase3ScreeningAndValidation:
                     output_file=boltz_cfg.get("output_file", "predicted_complex.pdb"),
                 )
                 candidate.metrics.update(boltz_conf)
+                logger.info(f"  ✓ Boltz complete")
+            elif not boltz_enabled:
+                logger.info(f"  ⊘ Boltz disabled (GPU required)")
 
             gates = self.fast_config["gates"]
-            if boltz_pdb is not None:
+            if boltz_pdb is not None and chai_pdb is not None:
+                # Both models available - use consensus
                 # Chai output as reference(native), Boltz output as model.
                 consensus_dockq = self._calculate_dockq(model_pdb=boltz_pdb, reference_pdb=chai_pdb)
                 candidate.metrics["consensus_dockq_chai_boltz"] = consensus_dockq
@@ -210,7 +232,8 @@ class Phase3ScreeningAndValidation:
                     candidate.decision = {"gate": "FAIL", "reason": f"Consensus DockQ {consensus_dockq:.3f} < {refine_thr}"}
                     candidate.stage = "failed"
                     logger.info(f"  FAIL - consensus DockQ: {consensus_dockq:.3f}")
-            else:
+            elif chai_pdb is not None:
+                # Only Chai available - use single model confidence
                 conf = candidate.metrics.get("chai_confidence", 0.0)
                 pass_conf = gates.get("single_model_pass_conf", 0.7)
                 refine_conf = gates.get("single_model_refine_conf", 0.5)
@@ -226,6 +249,12 @@ class Phase3ScreeningAndValidation:
                     candidate.decision = {"gate": "FAIL", "reason": f"Chai confidence {conf:.2f} < {refine_conf}"}
                     candidate.stage = "failed"
                     logger.info(f"  FAIL - Chai confidence: {conf:.2f}")
+            else:
+                # No structure prediction available - skip to deep validation
+                logger.warning(f"  ⚠ No Chai/Boltz prediction (both disabled)")
+                candidate.decision = {"gate": "PASS", "reason": "No fast screening, proceeding to deep validation"}
+                candidate.stage = "fast_screened"
+                logger.info(f"  PASS - Skipping to deep validation")
 
             candidates_dir = Path(self.config["project_root"]) / self.config["paths"]["candidates"]
             candidate.save(candidates_dir)
@@ -734,15 +763,17 @@ class Phase3ScreeningAndValidation:
             parts = candidate_pdb.parts
             if "rfdiffusion" in parts:
                 r = parts.index("rfdiffusion")
+                # New format: rfdiffusion/date/run_id/denovo/
                 if len(parts) > r + 2:
                     date_dir = parts[r + 1]
-                    time_dir = parts[r + 2]
-                    denovo_pdb = outputs_root / "rfdiffusion" / date_dir / time_dir / "denovo" / f"binder_{idx}.pdb"
+                    run_id = parts[r + 2]
+                    denovo_pdb = outputs_root / "rfdiffusion" / date_dir / run_id / "denovo" / f"binder_{idx}.pdb"
                     if denovo_pdb.exists():
                         return denovo_pdb
 
         if idx is not None:
-            matches = sorted(outputs_root.glob(f"rfdiffusion/*/*/denovo/binder_{idx}.pdb"))
+            # Search pattern: rfdiffusion/*/run_*/denovo/binder_X.pdb
+            matches = sorted(outputs_root.glob(f"rfdiffusion/*/run_*/denovo/binder_{idx}.pdb"))
             if matches:
                 return matches[-1]
 
@@ -767,16 +798,18 @@ class Phase3ScreeningAndValidation:
             parts = candidate_pdb.parts
             if "rfdiffusion" in parts:
                 r = parts.index("rfdiffusion")
+                # New format: rfdiffusion/date/run_id/...
                 if len(parts) > r + 2:
                     date_dir = parts[r + 1]
-                    time_dir = parts[r + 2]
-                    seq_dir = outputs_root / "proteinmpnn" / date_dir / time_dir / "mpnn" / f"backbone_{idx:03d}" / "seqs"
+                    run_id = parts[r + 2]
+                    seq_dir = outputs_root / "proteinmpnn" / date_dir / run_id / "mpnn" / f"backbone_{idx:03d}" / "seqs"
                     if seq_dir.exists():
                         files = sorted(seq_dir.glob("*.fa"))
                         if files:
                             return files[0]
 
-        matches = sorted(outputs_root.glob(f"proteinmpnn/*/*/mpnn/backbone_{idx:03d}/seqs/*.fa"))
+        # Search pattern: proteinmpnn/*/run_*/mpnn/backbone_XXX/seqs/*.fa
+        matches = sorted(outputs_root.glob(f"proteinmpnn/*/run_*/mpnn/backbone_{idx:03d}/seqs/*.fa"))
         if matches:
             return matches[-1]
         return None

@@ -98,20 +98,39 @@ class RFdiffusionRunner(ToolRunner):
         import os
         import platform
         
-        # Try to find conda environment
-        conda_base = os.environ.get('CONDA_PREFIX', os.path.expanduser('~/miniconda3'))
+        # Try multiple possible conda locations
+        possible_conda_bases = [
+            os.path.expanduser('~/miniconda3'),
+            os.path.expanduser('~/anaconda3'),
+            '/opt/conda',
+            os.environ.get('CONDA_PREFIX', '').replace(f'/envs/{self.conda_env}', '') if os.environ.get('CONDA_PREFIX') else None
+        ]
         
-        if platform.system() == 'Windows':
-            python_path = os.path.join(conda_base, 'envs', self.conda_env, 'python.exe')
-        else:
-            python_path = os.path.join(conda_base, 'envs', self.conda_env, 'bin', 'python')
+        # Filter out None values
+        possible_conda_bases = [p for p in possible_conda_bases if p]
         
-        # Check if conda python exists
-        if os.path.exists(python_path):
-            return python_path
+        for conda_base in possible_conda_bases:
+            if platform.system() == 'Windows':
+                python_path = os.path.join(conda_base, 'envs', self.conda_env, 'python.exe')
+            else:
+                python_path = os.path.join(conda_base, 'envs', self.conda_env, 'bin', 'python')
+            
+            # Check if conda python exists
+            if os.path.exists(python_path):
+                logger.info(f"Found conda Python at: {python_path}")
+                # Verify it's the correct Python version
+                import subprocess
+                try:
+                    result = subprocess.run([python_path, '--version'], 
+                                          capture_output=True, text=True, timeout=5)
+                    logger.info(f"Conda Python version: {result.stdout.strip()}")
+                except:
+                    pass
+                return python_path
         
         # Fallback: try to use conda run
-        logger.warning(f"Conda Python not found at {python_path}, will try 'conda run'")
+        logger.warning(f"Conda Python not found in any location, will try 'conda run'")
+        logger.warning(f"Searched locations: {possible_conda_bases}")
         return None
     
     def generate_binder(self, target_pdb: Path, target_chain: str,
@@ -155,6 +174,7 @@ class RFdiffusionRunner(ToolRunner):
         conda_python = self._get_conda_python()
         
         if conda_python:
+            logger.info(f"Using conda Python directly: {conda_python}")
             command = [
                 conda_python,
                 tool_script_posix,
@@ -167,8 +187,9 @@ class RFdiffusionRunner(ToolRunner):
             ]
         else:
             # Fallback: use conda run
+            logger.info(f"Using 'conda run -n {self.conda_env}'")
             command = [
-                "conda", "run", "-n", self.conda_env, "python",
+                "conda", "run", "-n", self.conda_env, "--no-capture-output", "python",
                 tool_script_posix,
                 f"inference.input_pdb={target_pdb_posix}",
                 f"inference.output_prefix={output_prefix_posix}",
@@ -179,6 +200,21 @@ class RFdiffusionRunner(ToolRunner):
             ]
         if target_residues and binder_length:
             contig_str = f"{target_chain}{target_residues}/0 {binder_length}"
+            command.append(f"contigmap.contigs=[{contig_str}]")
+        elif target_residues or binder_length:
+            # If only one is provided, use default for the other
+            if not target_residues:
+                target_residues = "1-150"  # Default target residues
+                logger.warning(f"target_residues not provided, using default: {target_residues}")
+            if not binder_length:
+                binder_length = "70-100"  # Default binder length
+                logger.warning(f"binder_length not provided, using default: {binder_length}")
+            contig_str = f"{target_chain}{target_residues}/0 {binder_length}"
+            command.append(f"contigmap.contigs=[{contig_str}]")
+        else:
+            # Neither provided - use sensible defaults
+            logger.warning("Neither target_residues nor binder_length provided, using defaults")
+            contig_str = f"{target_chain}1-150/0 70-100"
             command.append(f"contigmap.contigs=[{contig_str}]")
         if hotspot_str:
             command.append(f"ppi.hotspot_res=[{hotspot_str}]")
@@ -191,9 +227,16 @@ class RFdiffusionRunner(ToolRunner):
         # Add rfdiffusion directory and SE3Transformer to PYTHONPATH for imports
         import os
         se3_path = self.tool_path / "env/SE3Transformer"
-        env = {
-            'PYTHONPATH': f"{self.tool_path}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
-        }
+        
+        # Copy existing environment and add PYTHONPATH
+        env = os.environ.copy()
+        env['PYTHONPATH'] = f"{self.tool_path}:{se3_path}:{env.get('PYTHONPATH', '')}"
+        
+        # If using conda Python directly, unset VIRTUAL_ENV to prevent conflicts
+        if conda_python:
+            logger.info("Unsetting VIRTUAL_ENV to prevent conflicts with conda environment")
+            env.pop('VIRTUAL_ENV', None)
+            env.pop('PYTHONHOME', None)
         
         exit_code, stdout, stderr = self.run(command, cwd=self.tool_path, env=env)
         
@@ -453,23 +496,48 @@ class RFdiffusionRunner(ToolRunner):
         output_prefix_posix = str(PathlibPath(output_dir / "refined").resolve()).replace('\\', '/')
         tool_script_posix = str((self.tool_path / "scripts/run_inference.py").resolve()).replace('\\', '/')
         
-        command = [
-            "python",
-            tool_script_posix,
-            f"inference.input_pdb={input_pdb_posix}",
-            f"inference.output_prefix={output_prefix_posix}",
-            f"inference.num_designs=1",
-            f"diffuser.partial_T={T}",
-            f"diffuser.T=50",
-            f"contigmap.contigs=[{contig_str}]"
-        ]
+        # Get conda Python or use conda run (same as generate_binder)
+        conda_python = self._get_conda_python()
+        
+        if conda_python:
+            logger.info(f"Using conda Python directly for refinement: {conda_python}")
+            command = [
+                conda_python,
+                tool_script_posix,
+                f"inference.input_pdb={input_pdb_posix}",
+                f"inference.output_prefix={output_prefix_posix}",
+                f"inference.num_designs=1",
+                f"diffuser.partial_T={T}",
+                f"diffuser.T=50",
+                f"contigmap.contigs=[{contig_str}]"
+            ]
+        else:
+            # Fallback: use conda run
+            logger.info(f"Using 'conda run -n {self.conda_env}' for refinement")
+            command = [
+                "conda", "run", "-n", self.conda_env, "--no-capture-output", "python",
+                tool_script_posix,
+                f"inference.input_pdb={input_pdb_posix}",
+                f"inference.output_prefix={output_prefix_posix}",
+                f"inference.num_designs=1",
+                f"diffuser.partial_T={T}",
+                f"diffuser.T=50",
+                f"contigmap.contigs=[{contig_str}]"
+            ]
         
         # Add rfdiffusion directory and SE3Transformer to PYTHONPATH for imports
         import os
         se3_path = self.tool_path / "env/SE3Transformer"
-        env = {
-            'PYTHONPATH': f"{self.tool_path}:{se3_path}:{os.environ.get('PYTHONPATH', '')}"
-        }
+        
+        # Copy existing environment and add PYTHONPATH
+        env = os.environ.copy()
+        env['PYTHONPATH'] = f"{self.tool_path}:{se3_path}:{env.get('PYTHONPATH', '')}"
+        
+        # If using conda Python directly, unset VIRTUAL_ENV to prevent conflicts
+        if conda_python:
+            logger.info("Unsetting VIRTUAL_ENV to prevent conflicts with conda environment")
+            env.pop('VIRTUAL_ENV', None)
+            env.pop('PYTHONHOME', None)
         
         exit_code, stdout, stderr = self.run(command, cwd=self.tool_path, env=env)
         
@@ -649,9 +717,34 @@ class ChaiRunner(ToolRunner):
             [python_exe, "-m", "chai_lab.main", "fold", resolved_input_posix, output_dir_posix],
         ])
 
+        # Helper function to clean output directory
+        def clean_output_dir():
+            """Clean output directory for Chai-1 (requires empty dir)"""
+            import shutil
+            if output_dir.exists():
+                try:
+                    for item in output_dir.iterdir():
+                        if item.is_file():
+                            item.unlink()
+                        elif item.is_dir():
+                            shutil.rmtree(item)
+                    logger.info(f"Cleaned output directory: {output_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean output directory: {e}")
+
         last_err = ""
         for command in commands:
-            exit_code, stdout, stderr = self.run(command, cwd=self.tool_path if str(self.tool_path) else None)
+            # Clean output directory before each command attempt
+            clean_output_dir()
+            
+            # Run with retry, cleaning before each retry
+            exit_code, stdout, stderr = self._run_with_clean(
+                command, 
+                output_dir, 
+                clean_output_dir,
+                cwd=self.tool_path if str(self.tool_path) else None
+            )
+            
             if exit_code == 0:
                 break
             last_err = stderr
@@ -663,6 +756,69 @@ class ChaiRunner(ToolRunner):
         confidence_metrics = self._parse_confidence(output_dir)
         
         return complex_pdb, confidence_metrics
+    
+    def _run_with_clean(self, command, output_dir, clean_func, cwd=None, retry_count=2):
+        """Run command with cleaning before each retry attempt"""
+        import subprocess
+        import os
+        
+        # Prepare environment
+        run_env = os.environ.copy()
+        command_str = " ".join(str(x) for x in command)
+        
+        for attempt in range(retry_count + 1):
+            # Clean output directory before each attempt (except first)
+            if attempt > 0:
+                clean_func()
+                logger.info(f"Retrying... ({attempt}/{retry_count})")
+            
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=str(cwd) if cwd else None,
+                    capture_output=True,
+                    text=True,
+                    timeout=3600,
+                    env=run_env,
+                    shell=False
+                )
+                
+                if result.returncode == 0:
+                    logger.info(f"Command succeeded on attempt {attempt + 1}")
+                    return result.returncode, result.stdout, result.stderr
+                else:
+                    stderr_text = result.stderr or ""
+                    stdout_text = result.stdout or ""
+                    logger.warning(
+                        f"Command failed on attempt {attempt + 1} "
+                        f"(exit_code={result.returncode})"
+                    )
+                    logger.warning(f"Command: {command_str}")
+                    logger.warning(f"STDERR(head): {stderr_text[:2000]}")
+                    if len(stderr_text) > 2000:
+                        logger.warning(f"STDERR(tail): {stderr_text[-2000:]}")
+                    logger.warning(f"STDOUT(head): {stdout_text[:2000]}")
+                    if len(stdout_text) > 2000:
+                        logger.warning(f"STDOUT(tail): {stdout_text[-2000:]}")
+
+                    # If MSA server connectivity is broken, don't waste retries on the same command.
+                    # Let the caller fall through to fallback commands without server flags.
+                    if "--use-msa-server" in command_str and any(
+                        key in stderr_text
+                        for key in ["api.colabfold.com", "NameResolutionError", "MSA server"]
+                    ):
+                        logger.warning(
+                            "Detected MSA server connectivity failure; "
+                            "skipping retries for this command and trying fallback."
+                        )
+                        return result.returncode, stdout_text, stderr_text
+                    
+            except subprocess.TimeoutExpired:
+                logger.error(f"Command timed out on attempt {attempt + 1}")
+            except Exception as e:
+                logger.error(f"Command error on attempt {attempt + 1}: {str(e)}")
+        
+        return -1, "", "Failed after retries"
 
     def _find_prediction_file(self, output_dir: Path, output_file: str) -> Path:
         if output_file:
@@ -780,4 +936,3 @@ class BoltzRunner(ToolRunner):
         """Parse confidence metrics from Boltz output."""
         # Placeholder - actual implementation depends on Boltz output format.
         return {"boltz_confidence": 0.8}
-

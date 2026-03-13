@@ -52,14 +52,13 @@ class Phase1TargetDiscovery:
         
         # Generate target ID
         target_id = f"T{state.run_id.replace('-', '').replace('_', '')[:10]}"
-        now = datetime.now()
-        date_dir = now.strftime("%Y-%m-%d")
-        time_dir = now.strftime("%H-%M-%S")
 
         project_root = Path(self.config['project_root'])
 
-        # Normalize initial input under data/inputs/pdb/YYYY-MM-DD/HH-MM-SS/
-        inputs_pdb_dir = project_root / self.config['paths']['inputs_pdb'] / date_dir / time_dir
+        # Normalize initial input under data/inputs/pdb/date/run_id/
+        from ..utils.file_ops import get_date_dir
+        date_dir = get_date_dir()
+        inputs_pdb_dir = project_root / self.config['paths']['inputs_pdb'] / date_dir / state.run_id
         inputs_pdb_dir.mkdir(parents=True, exist_ok=True)
         normalized_target_pdb = inputs_pdb_dir / target_pdb.name
         import shutil

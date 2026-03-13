@@ -34,7 +34,10 @@ phase2:
 # Phase 3-A: Fast Screening
 phase3_fast:
   chai:
+    enabled: true
     path: /home01/hpc194a02/test/sim_pip/chai-lab
+    venv_path: /home/so/sim_pip/.venv
+    command_template: "chai-lab fold --use-msa-server --use-templates-server --device cuda:0 {input_path} {output_dir}"
   
   boltz:
     enabled: false

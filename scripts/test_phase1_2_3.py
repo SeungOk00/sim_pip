@@ -60,8 +60,9 @@ def test_phase1_2_3():
     project_root = script_dir.parent
     
     # Create pipeline state
-    from datetime import datetime
-    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from pipeline.utils.file_ops import get_run_id
+    outputs_root = project_root / "data" / "outputs"
+    run_id = get_run_id(outputs_root)
     state = PipelineState(run_id=run_id)
     logger.info(f"Created new run: {state.run_id}")
     
@@ -122,7 +123,22 @@ def test_phase1_2_3():
     
     chain_id = "A"
     hotspot_residues = [982, 990, 995]  # Insulin receptor kinase domain hotspots
-    notes = "Test run for insulin receptor kinase domain (4IBM) - Phase 1-2-3"
+    notes = "Test run for insulin receptor kinase domain (4IBM) - Phase 1-2-3 (CPU-friendly)"
+    
+    # Override config for CPU-friendly test
+    logger.info("\n" + "=" * 80)
+    logger.info("ADJUSTING CONFIG FOR CPU MODE")
+    logger.info("=" * 80)
+    logger.info("Reducing num_designs to 1 and using smaller target for CPU compatibility")
+    
+    # Modify config for CPU mode
+    config.config['phase2']['rfdiffusion']['num_designs'] = 1
+    config.config['phase2']['rfdiffusion']['target_residues'] = "982-999"  # Smaller range
+    config.config['phase2']['rfdiffusion']['binder_length'] = "60-60"      # Fixed small size
+    
+    logger.info(f"  num_designs: {config.config['phase2']['rfdiffusion']['num_designs']}")
+    logger.info(f"  target_residues: {config.config['phase2']['rfdiffusion']['target_residues']}")
+    logger.info(f"  binder_length: {config.config['phase2']['rfdiffusion']['binder_length']}")
     
     logger.info(f"\nTest inputs:")
     logger.info(f"  Target PDB: {target_pdb_path}")

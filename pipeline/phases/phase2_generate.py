@@ -7,7 +7,7 @@ import logging
 
 from ..models import DesignCandidate, PipelineState, RunRecord
 from ..utils.tool_wrapper import RFdiffusionRunner, ProteinMPNNRunner
-from ..utils.file_ops import ensure_dir, get_next_candidate_id
+from ..utils.file_ops import ensure_dir, get_next_candidate_id, get_date_dir
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -57,12 +57,11 @@ class Phase2GenerativeDesign:
         project_root = Path(self.config['project_root'])
         run_dir = project_root / self.config['paths']['runs'] / state.run_id / "phase2_generate"
         ensure_dir(run_dir)
-        now = datetime.now()
-        date_dir = now.strftime("%Y-%m-%d")
-        time_dir = now.strftime("%H-%M-%S")
+        
         outputs_root = project_root / self.config['paths']['outputs']
-        rfdiffusion_out_dir = outputs_root / "rfdiffusion" / date_dir / time_dir
-        proteinmpnn_out_dir = outputs_root / "proteinmpnn" / date_dir / time_dir
+        date_dir = get_date_dir()
+        rfdiffusion_out_dir = outputs_root / "rfdiffusion" / date_dir / state.run_id
+        proteinmpnn_out_dir = outputs_root / "proteinmpnn" / date_dir / state.run_id
         ensure_dir(rfdiffusion_out_dir)
         ensure_dir(proteinmpnn_out_dir)
         

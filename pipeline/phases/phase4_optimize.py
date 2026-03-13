@@ -8,7 +8,7 @@ import random
 from datetime import datetime
 
 from ..models import DesignCandidate, PipelineState
-from ..utils.file_ops import ensure_dir
+from ..utils.file_ops import ensure_dir, get_date_dir
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,8 @@ class Phase4Optimization:
         
         # Setup directories
         project_root = Path(self.config['project_root'])
-        now = datetime.now()
-        date_dir = now.strftime("%Y-%m-%d")
-        time_dir = now.strftime("%H-%M-%S")
-        run_dir = project_root / self.config['paths']['outputs'] / "rosetta" / date_dir / time_dir / "phase4_opt"
+        date_dir = get_date_dir()
+        run_dir = project_root / self.config['paths']['outputs'] / "rosetta" / date_dir / state.run_id / "phase4_opt"
         ensure_dir(run_dir)
         
         # Get validated candidates

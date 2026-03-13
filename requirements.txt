@@ -21,10 +21,10 @@ torch>=2.3.1,<2.7
 pyrosetta-installer
 
 # DockQ for structure quality assessment
-DockQ
+# DockQ  # Requires compilation, install separately if needed
 
 # Scientific computing
-numpy>=1.21.0
+numpy>=1.21.0  # Will use pre-built wheel
 # scipy>=1.7.0  # Installed separately via conda to avoid Fortran compilation issues
 pandas>=1.3.0
 

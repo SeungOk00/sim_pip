@@ -60,7 +60,10 @@ def run_pipeline(config: Config, args):
         state.config = config.to_dict()
         run_id = state.run_id
     else:
-        run_id = get_run_id()
+        # Get project root and outputs_root for sequential run_id
+        project_root = Path(config.get('project_root'))
+        outputs_root = project_root / config.get('paths.outputs')
+        run_id = get_run_id(outputs_root)
         state = PipelineState(run_id=run_id, config=config.to_dict())
     
     # Setup run directory

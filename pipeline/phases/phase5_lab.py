@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 
 from ..models import DesignCandidate, PipelineState
-from ..utils.file_ops import ensure_dir
+from ..utils.file_ops import ensure_dir, get_date_dir
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,8 @@ class Phase5LabAutomation:
         
         # Setup directories
         project_root = Path(self.config['project_root'])
-        now = datetime.now()
-        date_dir = now.strftime("%Y-%m-%d")
-        time_dir = now.strftime("%H-%M-%S")
-        run_dir = project_root / self.config['paths']['outputs'] / "lab" / date_dir / time_dir / "phase5_lab"
+        date_dir = get_date_dir()
+        run_dir = project_root / self.config['paths']['outputs'] / "lab" / date_dir / state.run_id / "phase5_lab"
         ensure_dir(run_dir)
         
         # Get final candidates
