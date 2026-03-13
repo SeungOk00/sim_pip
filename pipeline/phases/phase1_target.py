@@ -64,8 +64,8 @@ class Phase1TargetDiscovery:
         import shutil
         shutil.copy2(target_pdb, normalized_target_pdb)
 
-        # Create target metadata directory
-        target_dir = project_root / self.config['paths']['targets'] / target_id
+        # Create target metadata directory under: targets/date/run_id/target_id
+        target_dir = project_root / self.config['paths']['targets'] / date_dir / state.run_id / target_id
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # Default pocket definition

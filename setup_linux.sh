@@ -178,21 +178,48 @@ echo ""
 echo "[3/10] Setting up RFdiffusion environment (SE3nv)..."
 echo ""
 
-# Accept conda ToS automatically
-if command -v conda &> /dev/null; then
-    conda config --set channel_priority flexible 2>/dev/null || true
-    # Set safety checks to disabled to avoid prompts
-    conda config --set safety_checks disabled 2>/dev/null || true
-    # Accept all defaults
-    conda config --set always_yes true 2>/dev/null || true
+resolve_conda_cmd() {
+    if command -v conda &> /dev/null; then
+        command -v conda
+        return 0
+    fi
+    if [ -x "$HOME/miniconda3/bin/conda" ]; then
+        echo "$HOME/miniconda3/bin/conda"
+        return 0
+    fi
+    return 1
+}
+
+CONDA_CMD="$(resolve_conda_cmd || true)"
+if [ -z "$CONDA_CMD" ]; then
+    echo "ERROR: conda command not found."
+    echo "Please run: source \"$HOME/miniconda3/etc/profile.d/conda.sh\""
+    exit 1
 fi
 
-if conda env list | grep -q "SE3nv"; then
+# Accept conda ToS automatically for non-interactive runs.
+if "$CONDA_CMD" tos --help >/dev/null 2>&1; then
+    echo "Accepting conda Terms of Service for required channels..."
+    "$CONDA_CMD" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main >/dev/null
+    "$CONDA_CMD" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r >/dev/null
+    echo "✓ Conda ToS accepted."
+else
+    echo "WARNING: 'conda tos' command not available in this conda version."
+    echo "Please update conda if ToS error appears."
+fi
+
+"$CONDA_CMD" config --set channel_priority flexible 2>/dev/null || true
+# Set safety checks to disabled to avoid prompts
+"$CONDA_CMD" config --set safety_checks disabled 2>/dev/null || true
+# Accept all defaults
+"$CONDA_CMD" config --set always_yes true 2>/dev/null || true
+
+if "$CONDA_CMD" env list | grep -q "SE3nv"; then
     echo "SE3nv environment already exists."
     echo "✓ Using existing SE3nv environment."
 else
     echo "Creating SE3nv environment..."
-    yes | conda env create -f tools/rfdiffusion/env/SE3nv.yml || conda env create -f tools/rfdiffusion/env/SE3nv.yml
+    yes | "$CONDA_CMD" env create -f tools/rfdiffusion/env/SE3nv.yml || "$CONDA_CMD" env create -f tools/rfdiffusion/env/SE3nv.yml
     echo "✓ SE3nv environment created."
 fi
 
@@ -207,6 +234,34 @@ PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null
 CUDA_AVAILABLE=$(python -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
 
 echo "Current PyTorch version: $PYTORCH_VERSION"
+
+# Repair common solver mismatch: CPU-only torch from conda-forge in SE3nv.
+if [ "$CUDA_AVAILABLE" != "True" ] && [ -n "${CONDA_CMD:-}" ]; then
+    echo "CUDA not detected in SE3nv. Repairing PyTorch/CUDA package set..."
+    "$CONDA_CMD" install -n SE3nv --strict-channel-priority -y \
+        pytorch::pytorch=1.9.1 \
+        pytorch::torchvision=0.10.1 \
+        pytorch::torchaudio=0.9.1 \
+        conda-forge::cudatoolkit=11.1 \
+        dglteam::dgl-cuda11.1 || true
+
+    PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
+    CUDA_AVAILABLE=$(python -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+    echo "Post-repair PyTorch version: $PYTORCH_VERSION"
+fi
+
+# If conda solver still leaves CPU torch, force CUDA wheels for RFdiffusion compatibility.
+if [ "$CUDA_AVAILABLE" != "True" ]; then
+    echo "Conda repair did not enable CUDA. Installing PyTorch cu111 wheels in SE3nv..."
+    python -m pip install --upgrade --force-reinstall \
+        --extra-index-url https://download.pytorch.org/whl/cu111 \
+        torch==1.9.1+cu111 torchvision==0.10.1+cu111 torchaudio==0.9.1 || true
+    python -m pip install --force-reinstall "numpy<2" || true
+
+    PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
+    CUDA_AVAILABLE=$(python -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+    echo "Post-pip-repair PyTorch version: $PYTORCH_VERSION"
+fi
 
 if [ "$CUDA_AVAILABLE" = "True" ]; then
     GPU_NAME=$(python -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null)
@@ -244,7 +299,7 @@ if [ ! -d "tools/rfdiffusion/env/SE3Transformer/build" ]; then
     echo ""
     echo "Installing SE3-Transformer..."
     cd tools/rfdiffusion/env/SE3Transformer
-    pip install --no-cache-dir -r requirements.txt
+    python -m pip install --no-cache-dir -r requirements.txt
     python setup.py install
     cd ../../../..
     echo "✓ SE3-Transformer installed."
@@ -254,7 +309,7 @@ if [ ! -f "tools/rfdiffusion/setup.py" ] || ! python -c "import rfdiffusion" 2>/
     echo ""
     echo "Installing RFdiffusion module..."
     cd tools/rfdiffusion
-    pip install -e .
+    python -m pip install -e .
     cd ../..
     echo "✓ RFdiffusion installed."
 fi
@@ -316,32 +371,68 @@ echo ""
 echo "[5/10] Setting up main Python environment..."
 echo ""
 
+VENV_PYTHON="$PYTHON_CMD"
+PYTHON_VERSION_STR="$($PYTHON_CMD -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PYTHON_MAJOR="${PYTHON_VERSION_STR%%.*}"
+PYTHON_MINOR="${PYTHON_VERSION_STR##*.}"
+TARGET_PYTHON="3.12"
+TARGET_MAJOR="${TARGET_PYTHON%%.*}"
+TARGET_MINOR="${TARGET_PYTHON##*.}"
+
+# Main project venv must use Python 3.12.
+if [ "$PYTHON_MAJOR" -ne "$TARGET_MAJOR" ] || [ "$PYTHON_MINOR" -ne "$TARGET_MINOR" ]; then
+    echo "Detected Python $PYTHON_VERSION_STR. Main .venv requires Python $TARGET_PYTHON."
+    MAIN_PY_ENV="sim_pip_py312"
+
+    if [ -z "${CONDA_CMD:-}" ]; then
+        echo "ERROR: conda is required to provision Python $TARGET_PYTHON for this setup."
+        echo "Please initialize conda and rerun this script."
+        exit 1
+    fi
+
+    if "$CONDA_CMD" env list | awk '{print $1}' | grep -qx "$MAIN_PY_ENV"; then
+        echo "✓ Reusing conda env '$MAIN_PY_ENV' (Python $TARGET_PYTHON)."
+    else
+        echo "Creating conda env '$MAIN_PY_ENV' with Python $TARGET_PYTHON..."
+        "$CONDA_CMD" create -n "$MAIN_PY_ENV" python="$TARGET_PYTHON" -y
+    fi
+
+    VENV_PYTHON="$("$CONDA_CMD" run -n "$MAIN_PY_ENV" python -c 'import sys; print(sys.executable)')"
+    echo "✓ Using Python $TARGET_PYTHON interpreter for .venv: $VENV_PYTHON"
+fi
+
 if [ -d ".venv" ]; then
-    echo ".venv already exists."
-    # Use existing venv without prompting
-    echo "✓ Using existing .venv."
+    VENV_VERSION_STR="$(.venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")"
+    VENV_MAJOR="${VENV_VERSION_STR%%.*}"
+    VENV_MINOR="${VENV_VERSION_STR##*.}"
+    if [ "$VENV_MAJOR" -ne "$TARGET_MAJOR" ] || [ "$VENV_MINOR" -ne "$TARGET_MINOR" ]; then
+        echo ".venv uses Python $VENV_VERSION_STR (expected $TARGET_PYTHON). Recreating .venv..."
+        rm -rf .venv
+        "$VENV_PYTHON" -m venv .venv
+        echo "✓ .venv recreated with Python $TARGET_PYTHON."
+    else
+        echo ".venv already exists."
+        # Use existing venv without prompting
+        echo "✓ Using existing .venv."
+    fi
 else
-    $PYTHON_CMD -m venv .venv
+    "$VENV_PYTHON" -m venv .venv
     echo "✓ .venv created."
 fi
 
 # Activate virtual environment
 source .venv/bin/activate
 echo "✓ Virtual environment activated."
+export PYTHONNOUSERSITE=1
+echo "Using Python: $(python --version 2>&1) at $(which python)"
 
 # Upgrade pip using python -m pip
 echo "Upgrading pip..."
 python -m pip install --upgrade pip || echo "WARNING: pip upgrade failed, continuing..."
 
-# Install scipy via conda to avoid compilation issues
-echo "Installing scipy via conda (to avoid Fortran compilation)..."
-if command -v conda &> /dev/null; then
-    eval "$(conda shell.bash hook)"
-    conda install -c conda-forge scipy -y 2>/dev/null || echo "WARNING: scipy conda install failed, will try pip..."
-    echo "✓ scipy installed via conda."
-else
-    echo "WARNING: conda not found, scipy will be installed via pip..."
-fi
+# Install scipy in .venv (project default environment)
+echo "Installing scipy in .venv..."
+python -m pip install scipy || echo "WARNING: scipy install failed, continuing..."
 
 # Install requirements.txt
 echo ""
@@ -349,7 +440,7 @@ echo "Installing Python dependencies from requirements.txt..."
 echo "This may take several minutes (downloading ~2.5GB of packages)..."
 echo ""
 
-if pip install -r requirements.txt; then
+if python -m pip install -r requirements.txt; then
     echo ""
     echo "✓ All dependencies installed successfully!"
     echo ""
@@ -370,7 +461,7 @@ else
     echo "To install all dependencies, run:"
     echo "  sudo apt install -y build-essential python3-dev"
     echo "  source .venv/bin/activate"
-    echo "  pip install -r requirements.txt"
+    echo "  python -m pip install -r requirements.txt"
     echo ""
     echo "Continuing with installation..."
 fi
@@ -379,7 +470,7 @@ echo ""
 echo "[6/10] Installing Chai-1..."
 echo ""
 
-pip install -e ./tools/chai-1
+python -m pip install -e ./tools/chai-1
 if command -v chai-lab &> /dev/null; then
     echo "✓ Chai-1 installed successfully."
 else
@@ -470,7 +561,7 @@ python -m pip install --upgrade pip || echo "WARNING: pip upgrade failed, contin
 
 # Install Boltz using conda environment's Python
 echo "Installing Boltz..."
-pip install -e ./tools/boltz
+python -m pip install -e "./tools/boltz[cuda]"
 
 if command -v boltz &> /dev/null; then
     echo "✓ Boltz installed successfully."
@@ -489,32 +580,31 @@ echo ""
 echo "[8/10] Installing PyRosetta..."
 echo ""
 
-# Linux/macOS - Install PyRosetta via conda
-echo "Installing PyRosetta via conda..."
-if command -v conda &> /dev/null; then
-    eval "$(conda shell.bash hook)"
-    # Use WEST coast mirror (default)
-    conda install -y -c https://conda.rosettacommons.org -c conda-forge pyrosetta || \
-    # Fallback to EAST coast mirror
-    conda install -y -c https://conda.graylab.jhu.edu -c conda-forge pyrosetta
-    
-    # Check if pyrosetta module can be imported (need to use conda's python)
-    if $HOME/miniconda3/bin/python -c "import pyrosetta" 2>/dev/null; then
-        echo "✓ PyRosetta installed successfully."
-    else
-        echo "WARNING: PyRosetta may need to be tested in the correct environment."
-        echo "PyRosetta was installed but import test inconclusive."
-    fi
-else
-    echo "WARNING: Conda not found. Trying pip method..."
-    pip install pyrosetta-installer
-    python -c 'import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()'
-    
+# Prefer .venv first (default environment policy), then fall back to conda base.
+echo "Installing PyRosetta (try .venv first, then conda base fallback)..."
+PYROSETTA_OK="false"
+
+if python -m pip install pyrosetta-installer >/dev/null 2>&1; then
+    python -c 'import pyrosetta_installer; pyrosetta_installer.install_pyrosetta()' >/dev/null 2>&1 || true
     if python -c "import pyrosetta" 2>/dev/null; then
-        echo "✓ PyRosetta installed successfully."
-    else
-        echo "WARNING: PyRosetta installation may have failed."
+        PYROSETTA_OK="true"
+        echo "✓ PyRosetta installed in .venv."
     fi
+fi
+
+if [ "$PYROSETTA_OK" != "true" ] && [ -n "${CONDA_CMD:-}" ]; then
+    echo "PyRosetta .venv install not available. Trying conda base..."
+    "$CONDA_CMD" install -n base -y -c https://conda.rosettacommons.org -c conda-forge pyrosetta || \
+    "$CONDA_CMD" install -n base -y -c https://conda.graylab.jhu.edu -c conda-forge pyrosetta
+
+    if "$CONDA_CMD" run -n base python -c "import pyrosetta" 2>/dev/null; then
+        PYROSETTA_OK="true"
+        echo "✓ PyRosetta installed in conda base."
+    fi
+fi
+
+if [ "$PYROSETTA_OK" != "true" ]; then
+    echo "WARNING: PyRosetta installation may have failed."
 fi
 echo ""
 
@@ -527,12 +617,12 @@ if command -v kalign &> /dev/null; then
 else
     echo "Installing kalign via conda..."
     # Try kalign3 from bioconda and conda-forge
-    if conda install -c bioconda -c conda-forge kalign3 -y; then
+    if [ -n "${CONDA_CMD:-}" ] && "$CONDA_CMD" install -n base -c bioconda -c conda-forge kalign3 -y; then
         echo "✓ kalign3 installed successfully."
     else
         echo "WARNING: kalign installation failed via conda."
         echo "kalign is optional. You can install it manually later if needed:"
-        echo "  conda install -c bioconda -c conda-forge kalign3"
+        echo "  conda install -n base -c bioconda -c conda-forge kalign3"
         echo "  or: sudo apt install kalign"
         echo "Continuing without kalign..."
     fi
@@ -550,11 +640,11 @@ if command -v DockQ &> /dev/null; then
 else
     echo "Installing DockQ via conda (to avoid compilation)..."
     # Try conda first, then pip as fallback
-    if conda install -c conda-forge -c bioconda dockq -y 2>/dev/null; then
+    if [ -n "${CONDA_CMD:-}" ] && "$CONDA_CMD" install -n base -c conda-forge -c bioconda dockq -y 2>/dev/null; then
         echo "✓ DockQ installed via conda."
     else
         echo "Conda installation failed. Trying pip (may require gcc)..."
-        pip install DockQ 2>/dev/null || {
+        python -m pip install DockQ 2>/dev/null || {
             echo "WARNING: DockQ installation failed."
             echo "DockQ requires gcc for compilation. You can:"
             echo "  1. Install gcc: sudo apt install build-essential"

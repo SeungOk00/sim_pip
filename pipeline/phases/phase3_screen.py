@@ -55,13 +55,10 @@ class Phase3ScreeningAndValidation:
         logger.info("PHASE 3-A: Fast Screening")
         logger.info("=" * 80)
 
-        fast_dir = outputs_root / "phase3_fast" / date_dir / state.run_id
-        ensure_dir(fast_dir)
-
         generated_candidates = state.get_candidates_by_stage("generated")
         logger.info(f"Screening {len(generated_candidates)} candidates")
         for candidate in generated_candidates:
-            self._fast_screen_candidate(candidate, fast_dir, state)
+            self._fast_screen_candidate(candidate, state)
 
         passed = state.get_candidates_by_stage("fast_screened")
         failed = [c for c in state.candidates if c.decision.get("gate") == "FAIL"]
@@ -94,7 +91,7 @@ class Phase3ScreeningAndValidation:
         logger.info(f"{'=' * 80}\n")
         return state
 
-    def _fast_screen_candidate(self, candidate: DesignCandidate, run_dir: Path, state: PipelineState):
+    def _fast_screen_candidate(self, candidate: DesignCandidate, state: PipelineState):
         logger.info(f"\nScreening {candidate.candidate_id}...")
 
         try:
@@ -140,8 +137,8 @@ class Phase3ScreeningAndValidation:
                 # Add microseconds to ensure unique directory for each attempt
                 unique_id = now.strftime("%H-%M-%S-%f")
                 
-                # Chai input file in temp location
-                chai_input_dir = outputs_root / "temp_chai_input"
+                # Keep Chai temp inputs under the chai1 output tree.
+                chai_input_dir = outputs_root / "chai1" / "temp_chai_input"
                 ensure_dir(chai_input_dir)
                 chai_input = chai_input_dir / f"{candidate.candidate_id}_{unique_id}_chai_input.fasta"
                 self._write_chai_fasta_input(
@@ -170,7 +167,7 @@ class Phase3ScreeningAndValidation:
                 candidate.complex_pdb_path = str(chai_pdb)
                 logger.info(f"  ✓ Chai-1 complete")
             else:
-                logger.info(f"  ⊘ Chai-1 disabled (GPU required)")
+                logger.info("  ⊘ Chai-1 disabled by config (phase3_fast.chai.enabled=false)")
 
             # Check if Boltz is enabled
             boltz_cfg = self.fast_config.get("boltz", {})
@@ -209,7 +206,7 @@ class Phase3ScreeningAndValidation:
                 candidate.metrics.update(boltz_conf)
                 logger.info(f"  ✓ Boltz complete")
             elif not boltz_enabled:
-                logger.info(f"  ⊘ Boltz disabled (GPU required)")
+                logger.info("  ⊘ Boltz disabled by config (phase3_fast.boltz.enabled=false)")
 
             gates = self.fast_config["gates"]
             if boltz_pdb is not None and chai_pdb is not None:

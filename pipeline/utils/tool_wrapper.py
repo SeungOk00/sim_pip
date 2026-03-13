@@ -92,11 +92,31 @@ class RFdiffusionRunner(ToolRunner):
     def __init__(self, tool_path: str, conda_env: str = "SE3nv", dry_run: bool = False):
         super().__init__("RFdiffusion", tool_path, dry_run)
         self.conda_env = conda_env
+
+    def _get_conda_exe(self) -> str:
+        """Resolve conda executable path even when PATH is minimal (e.g., inside .venv)."""
+        import os
+        import shutil
+        candidates = [
+            os.environ.get("CONDA_EXE"),
+            shutil.which("conda"),
+            os.path.expanduser("~/miniconda3/bin/conda"),
+            os.path.expanduser("~/anaconda3/bin/conda"),
+            "/opt/conda/bin/conda",
+            "/scratch/hpc194a02/.myksc/codeserver/miniconda3/bin/conda",
+        ]
+        for exe in candidates:
+            if exe and os.path.isfile(exe) and os.access(exe, os.X_OK):
+                return exe
+        return "conda"
         
     def _get_conda_python(self) -> str:
         """Get Python executable from conda environment"""
         import os
         import platform
+        import json
+        import subprocess
+        conda_exe = self._get_conda_exe()
         
         # Try multiple possible conda locations
         possible_conda_bases = [
@@ -119,7 +139,6 @@ class RFdiffusionRunner(ToolRunner):
             if os.path.exists(python_path):
                 logger.info(f"Found conda Python at: {python_path}")
                 # Verify it's the correct Python version
-                import subprocess
                 try:
                     result = subprocess.run([python_path, '--version'], 
                                           capture_output=True, text=True, timeout=5)
@@ -127,6 +146,28 @@ class RFdiffusionRunner(ToolRunner):
                 except:
                     pass
                 return python_path
+
+        # Try discovering env path from `conda env list --json`
+        try:
+            result = subprocess.run(
+                [conda_exe, "env", "list", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                for env_path in data.get("envs", []):
+                    if env_path.endswith(f"/{self.conda_env}"):
+                        python_path = os.path.join(
+                            env_path,
+                            "python.exe" if platform.system() == "Windows" else "bin/python"
+                        )
+                        if os.path.exists(python_path):
+                            logger.info(f"Found conda Python from env list: {python_path}")
+                            return python_path
+        except Exception:
+            pass
         
         # Fallback: try to use conda run
         logger.warning(f"Conda Python not found in any location, will try 'conda run'")
@@ -169,6 +210,7 @@ class RFdiffusionRunner(ToolRunner):
         target_pdb_posix = str(PathlibPath(target_pdb).resolve()).replace('\\', '/')
         output_prefix_posix = str(PathlibPath(output_dir / output_prefix).resolve()).replace('\\', '/')
         tool_script_posix = str((self.tool_path / "scripts/run_inference.py").resolve()).replace('\\', '/')
+        hydra_run_dir_posix = str((PathlibPath(output_dir) / ".hydra_run").resolve()).replace('\\', '/')
         
         # Get conda Python or use conda run
         conda_python = self._get_conda_python()
@@ -183,20 +225,25 @@ class RFdiffusionRunner(ToolRunner):
                 f"inference.num_designs={num_designs}",
                 f"diffuser.T={T}",
                 f"denoiser.noise_scale_ca={noise_scale}",
-                f"denoiser.noise_scale_frame={noise_scale}"
+                f"denoiser.noise_scale_frame={noise_scale}",
+                f"hydra.run.dir={hydra_run_dir_posix}",
+                "hydra.output_subdir=null",
             ]
         else:
             # Fallback: use conda run
             logger.info(f"Using 'conda run -n {self.conda_env}'")
+            conda_exe = self._get_conda_exe()
             command = [
-                "conda", "run", "-n", self.conda_env, "--no-capture-output", "python",
+                conda_exe, "run", "-n", self.conda_env, "--no-capture-output", "python",
                 tool_script_posix,
                 f"inference.input_pdb={target_pdb_posix}",
                 f"inference.output_prefix={output_prefix_posix}",
                 f"inference.num_designs={num_designs}",
                 f"diffuser.T={T}",
                 f"denoiser.noise_scale_ca={noise_scale}",
-                f"denoiser.noise_scale_frame={noise_scale}"
+                f"denoiser.noise_scale_frame={noise_scale}",
+                f"hydra.run.dir={hydra_run_dir_posix}",
+                "hydra.output_subdir=null",
             ]
         if target_residues and binder_length:
             contig_str = f"{target_chain}{target_residues}/0 {binder_length}"
@@ -231,6 +278,34 @@ class RFdiffusionRunner(ToolRunner):
         # Copy existing environment and add PYTHONPATH
         env = os.environ.copy()
         env['PYTHONPATH'] = f"{self.tool_path}:{se3_path}:{env.get('PYTHONPATH', '')}"
+
+        # Ensure conda env libstdc++ is preferred over system one (GLIBCXX mismatch fix).
+        conda_prefix = None
+        if conda_python:
+            conda_prefix = str(Path(conda_python).resolve().parent.parent)
+        else:
+            try:
+                conda_exe = self._get_conda_exe()
+                probe = subprocess.run(
+                    [conda_exe, "run", "-n", self.conda_env, "python", "-c", "import sys; print(sys.prefix)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=20
+                )
+                if probe.returncode == 0:
+                    conda_prefix = probe.stdout.strip().splitlines()[-1].strip()
+            except Exception:
+                pass
+        if conda_prefix:
+            conda_lib = str(Path(conda_prefix) / "lib")
+            existing_ld = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = f"{conda_lib}:{existing_ld}" if existing_ld else conda_lib
+            libstdcpp = str(Path(conda_lib) / "libstdc++.so.6")
+            if Path(libstdcpp).exists():
+                existing_preload = env.get("LD_PRELOAD", "")
+                env["LD_PRELOAD"] = f"{libstdcpp}:{existing_preload}" if existing_preload else libstdcpp
+            env["CONDA_PREFIX"] = conda_prefix
+            logger.info(f"Using conda library path: {conda_lib}")
         
         # If using conda Python directly, unset VIRTUAL_ENV to prevent conflicts
         if conda_python:
@@ -495,6 +570,7 @@ class RFdiffusionRunner(ToolRunner):
         input_pdb_posix = str(PathlibPath(input_pdb).resolve()).replace('\\', '/')
         output_prefix_posix = str(PathlibPath(output_dir / "refined").resolve()).replace('\\', '/')
         tool_script_posix = str((self.tool_path / "scripts/run_inference.py").resolve()).replace('\\', '/')
+        hydra_run_dir_posix = str((PathlibPath(output_dir) / ".hydra_run").resolve()).replace('\\', '/')
         
         # Get conda Python or use conda run (same as generate_binder)
         conda_python = self._get_conda_python()
@@ -509,20 +585,25 @@ class RFdiffusionRunner(ToolRunner):
                 f"inference.num_designs=1",
                 f"diffuser.partial_T={T}",
                 f"diffuser.T=50",
-                f"contigmap.contigs=[{contig_str}]"
+                f"contigmap.contigs=[{contig_str}]",
+                f"hydra.run.dir={hydra_run_dir_posix}",
+                "hydra.output_subdir=null",
             ]
         else:
             # Fallback: use conda run
             logger.info(f"Using 'conda run -n {self.conda_env}' for refinement")
+            conda_exe = self._get_conda_exe()
             command = [
-                "conda", "run", "-n", self.conda_env, "--no-capture-output", "python",
+                conda_exe, "run", "-n", self.conda_env, "--no-capture-output", "python",
                 tool_script_posix,
                 f"inference.input_pdb={input_pdb_posix}",
                 f"inference.output_prefix={output_prefix_posix}",
                 f"inference.num_designs=1",
                 f"diffuser.partial_T={T}",
                 f"diffuser.T=50",
-                f"contigmap.contigs=[{contig_str}]"
+                f"contigmap.contigs=[{contig_str}]",
+                f"hydra.run.dir={hydra_run_dir_posix}",
+                "hydra.output_subdir=null",
             ]
         
         # Add rfdiffusion directory and SE3Transformer to PYTHONPATH for imports
@@ -532,6 +613,34 @@ class RFdiffusionRunner(ToolRunner):
         # Copy existing environment and add PYTHONPATH
         env = os.environ.copy()
         env['PYTHONPATH'] = f"{self.tool_path}:{se3_path}:{env.get('PYTHONPATH', '')}"
+
+        # Ensure conda env libstdc++ is preferred over system one (GLIBCXX mismatch fix).
+        conda_prefix = None
+        if conda_python:
+            conda_prefix = str(Path(conda_python).resolve().parent.parent)
+        else:
+            try:
+                conda_exe = self._get_conda_exe()
+                probe = subprocess.run(
+                    [conda_exe, "run", "-n", self.conda_env, "python", "-c", "import sys; print(sys.prefix)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=20
+                )
+                if probe.returncode == 0:
+                    conda_prefix = probe.stdout.strip().splitlines()[-1].strip()
+            except Exception:
+                pass
+        if conda_prefix:
+            conda_lib = str(Path(conda_prefix) / "lib")
+            existing_ld = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = f"{conda_lib}:{existing_ld}" if existing_ld else conda_lib
+            libstdcpp = str(Path(conda_lib) / "libstdc++.so.6")
+            if Path(libstdcpp).exists():
+                existing_preload = env.get("LD_PRELOAD", "")
+                env["LD_PRELOAD"] = f"{libstdcpp}:{existing_preload}" if existing_preload else libstdcpp
+            env["CONDA_PREFIX"] = conda_prefix
+            logger.info(f"Using conda library path for refinement: {conda_lib}")
         
         # If using conda Python directly, unset VIRTUAL_ENV to prevent conflicts
         if conda_python:
@@ -667,6 +776,22 @@ class ChaiRunner(ToolRunner):
     def __init__(self, tool_path: str, dry_run: bool = False, venv_path: Optional[str] = None):
         super().__init__("Chai-1", tool_path, dry_run)
         self.venv_path = Path(venv_path) if venv_path else None
+
+    def _resolve_kalign_path(self) -> Optional[Path]:
+        """Find kalign binary path for Chai template processing."""
+        import os
+        import shutil
+        candidates = [
+            shutil.which("kalign"),
+            os.path.expanduser("~/miniconda3/bin/kalign"),
+            os.path.expanduser("~/anaconda3/bin/kalign"),
+            "/opt/conda/bin/kalign",
+            "/scratch/hpc194a02/.myksc/codeserver/miniconda3/bin/kalign",
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).exists():
+                return Path(candidate)
+        return None
     
     def predict_complex(
         self,
@@ -733,6 +858,17 @@ class ChaiRunner(ToolRunner):
                     logger.warning(f"Failed to clean output directory: {e}")
 
         last_err = ""
+        extra_env = None
+        kalign_path = self._resolve_kalign_path()
+        if kalign_path:
+            import os
+            extra_env = {
+                "PATH": f"{kalign_path.parent}:{os.environ.get('PATH', '')}"
+            }
+            logger.info(f"Using kalign from: {kalign_path}")
+        else:
+            logger.warning("kalign binary not found in known paths; Chai template mode may fail.")
+
         for command in commands:
             # Clean output directory before each command attempt
             clean_output_dir()
@@ -742,7 +878,8 @@ class ChaiRunner(ToolRunner):
                 command, 
                 output_dir, 
                 clean_output_dir,
-                cwd=self.tool_path if str(self.tool_path) else None
+                cwd=self.tool_path if str(self.tool_path) else None,
+                extra_env=extra_env,
             )
             
             if exit_code == 0:
@@ -757,13 +894,15 @@ class ChaiRunner(ToolRunner):
         
         return complex_pdb, confidence_metrics
     
-    def _run_with_clean(self, command, output_dir, clean_func, cwd=None, retry_count=2):
+    def _run_with_clean(self, command, output_dir, clean_func, cwd=None, retry_count=2, extra_env=None):
         """Run command with cleaning before each retry attempt"""
         import subprocess
         import os
         
         # Prepare environment
         run_env = os.environ.copy()
+        if extra_env:
+            run_env.update(extra_env)
         command_str = " ".join(str(x) for x in command)
         
         for attempt in range(retry_count + 1):

@@ -65,7 +65,8 @@ class Phase2GenerativeDesign:
         ensure_dir(rfdiffusion_out_dir)
         ensure_dir(proteinmpnn_out_dir)
         
-        candidates_dir = project_root / self.config['paths']['candidates']
+        # Save candidates under: candidates/date/run_id/candidate_id
+        candidates_dir = project_root / self.config['paths']['candidates'] / date_dir / state.run_id
         ensure_dir(candidates_dir)
         
         # Step 1: Generate de novo backbones
@@ -312,4 +313,3 @@ class Phase2GenerativeDesign:
                 continue
         
         return candidates
-

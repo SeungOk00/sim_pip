@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
         "inputs_pdb": "data/inputs/pdb",
         "inputs_fasta": "data/inputs/fasta",
         "outputs": "data/outputs",
-        "targets": "targets",
+        "targets": "data/targets",
         "runs": "data/runs",
         "candidates": "data/candidates",
         "configs": "configs"
@@ -36,13 +36,13 @@ DEFAULT_CONFIG = {
         "proteinmpnn": {
             "path": str(Path(__file__).resolve().parent.parent / "tools/proteinmpnn"),
             "num_seq_per_target": 10,
-            "sampling_temps": [0.1],
+            "sampling_temps": [0.1, 0.2, 0.3],
             "batch_size": 1,
-            "seed": 37,
+            "seed": 42,
             "design_chains": "B",
             "fixed_positions_jsonl": ""
         },
-        "max_candidates_per_target": 3
+        "max_candidates_per_target": 10
     },
     # Phase 3-A: Fast Screening
     "phase3_fast": {
@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
             "output_file": ""
         },
         "boltz": {
-            "enabled": False,  # Set to True when GPU is available
+            "enabled": True,  # Use GPU by default for Boltz
             "path": "",
             "venv_path": str(Path(__file__).resolve().parent.parent / ".boltz_venv"),
             "command_template": "boltz predict {input_path} --out_dir {output_dir} --override --use_msa_server",
@@ -175,4 +175,3 @@ class Config:
     def to_dict(self) -> Dict:
         """Get full configuration as dictionary"""
         return self.config.copy()
-

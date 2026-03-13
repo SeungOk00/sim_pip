@@ -135,10 +135,12 @@ def test_phase1_2_3():
     config.config['phase2']['rfdiffusion']['num_designs'] = 1
     config.config['phase2']['rfdiffusion']['target_residues'] = "982-999"  # Smaller range
     config.config['phase2']['rfdiffusion']['binder_length'] = "60-60"      # Fixed small size
+    config.config['phase3_fast']['boltz']['enabled'] = True
     
     logger.info(f"  num_designs: {config.config['phase2']['rfdiffusion']['num_designs']}")
     logger.info(f"  target_residues: {config.config['phase2']['rfdiffusion']['target_residues']}")
     logger.info(f"  binder_length: {config.config['phase2']['rfdiffusion']['binder_length']}")
+    logger.info(f"  boltz_enabled: {config.config['phase3_fast']['boltz']['enabled']}")
     
     logger.info(f"\nTest inputs:")
     logger.info(f"  Target PDB: {target_pdb_path}")

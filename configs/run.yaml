@@ -4,7 +4,7 @@ project_root: /home01/hpc194a02/test/sim_pip
 
 # Directory paths
 paths:
-  targets: targets
+  targets: data/targets
   runs: runs
   candidates: candidates
   configs: configs
