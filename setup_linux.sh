@@ -11,7 +11,7 @@ echo ""
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
-echo "[1/10] Checking system requirements..."
+echo "[1/11] Checking system requirements..."
 echo ""
 
 # Check for build tools (gcc, make, etc.)
@@ -93,7 +93,7 @@ fi
 echo "✓ Python version: $($PYTHON_CMD --version)"
 echo ""
 
-echo "[2/10] Installing Miniconda (if not already installed)..."
+echo "[2/11] Installing Miniconda (if not already installed)..."
 echo ""
 
 if ! command -v conda &> /dev/null; then
@@ -175,7 +175,7 @@ else
 fi
 echo ""
 
-echo "[3/10] Setting up RFdiffusion environment (SE3nv)..."
+echo "[3/11] Setting up RFdiffusion environment (SE3nv)..."
 echo ""
 
 resolve_conda_cmd() {
@@ -317,7 +317,7 @@ fi
 conda deactivate
 echo ""
 
-echo "[4/10] Downloading RFdiffusion models..."
+echo "[4/11] Downloading RFdiffusion models..."
 echo ""
 
 MODEL_DIR="$PROJECT_ROOT/tools/rfdiffusion/models"
@@ -368,7 +368,7 @@ echo ""
 echo "✓ All RFdiffusion models downloaded."
 echo ""
 
-echo "[5/10] Setting up main Python environment..."
+echo "[5/11] Setting up main Python environment..."
 echo ""
 
 VENV_PYTHON="$PYTHON_CMD"
@@ -467,7 +467,7 @@ else
 fi
 echo ""
 
-echo "[6/10] Installing Chai-1..."
+echo "[6/11] Installing Chai-1..."
 echo ""
 
 python -m pip install -e ./tools/chai-1
@@ -531,7 +531,49 @@ if [ "$DNS_OK" != "true" ] || [ "$HTTPS_OK" != "true" ]; then
 fi
 echo ""
 
-echo "[7/10] Installing Boltz (separate environment)..."
+echo "[7/11] Installing ColabFold (separate environment)..."
+echo ""
+
+# ColabFold is installed in a dedicated conda env to avoid conflicts with .venv.
+COLABFOLD_ENV="colabfold_env"
+
+# First deactivate any existing venv
+deactivate 2>/dev/null || true
+
+eval "$(conda shell.bash hook)"
+if conda env list | awk '{print $1}' | grep -qx "$COLABFOLD_ENV"; then
+    echo "$COLABFOLD_ENV environment already exists."
+    echo "✓ Using existing $COLABFOLD_ENV environment."
+else
+    echo "Creating $COLABFOLD_ENV environment..."
+    "$CONDA_CMD" create -n "$COLABFOLD_ENV" -c conda-forge -c bioconda \
+        python=3.12 kalign2=2.04 hhsuite=3.3.0 mmseqs2=18.8cc5c -y
+    echo "✓ $COLABFOLD_ENV environment created."
+fi
+
+conda activate "$COLABFOLD_ENV"
+python -m pip install --upgrade pip || echo "WARNING: pip upgrade failed, continuing..."
+
+echo "Installing ColabFold package..."
+python -m pip install "colabfold[alphafold,openmm]" || {
+    echo "WARNING: Full ColabFold extras install failed. Trying base package..."
+    python -m pip install colabfold
+}
+
+if command -v colabfold_batch &> /dev/null; then
+    echo "✓ ColabFold installed successfully."
+else
+    echo "WARNING: colabfold_batch command not found. ColabFold installation may be incomplete."
+fi
+
+conda deactivate
+
+# Reactivate main venv
+source .venv/bin/activate
+echo "✓ Switched back to main .venv environment."
+echo ""
+
+echo "[8/11] Installing Boltz (separate environment)..."
 echo ""
 
 # Boltz requires Python <3.13, create conda environment with Python 3.12
@@ -577,7 +619,7 @@ source .venv/bin/activate
 echo "✓ Switched back to main .venv environment."
 echo ""
 
-echo "[8/10] Installing PyRosetta..."
+echo "[9/11] Installing PyRosetta..."
 echo ""
 
 # Prefer .venv first (default environment policy), then fall back to conda base.
@@ -608,7 +650,7 @@ if [ "$PYROSETTA_OK" != "true" ]; then
 fi
 echo ""
 
-echo "[9/10] Installing system dependencies..."
+echo "[10/11] Installing system dependencies..."
 echo ""
 
 # kalign
@@ -660,7 +702,7 @@ else
 fi
 echo ""
 
-echo "[10/10] Creating necessary directories..."
+echo "[11/11] Creating necessary directories..."
 echo ""
 
 mkdir -p data/inputs/pdb
@@ -684,6 +726,7 @@ echo "Installed components:"
 echo "  ✓ RFdiffusion (SE3nv environment)"
 echo "  ✓ Main pipeline (.venv)"
 echo "  ✓ Chai-1"
+echo "  ✓ ColabFold (colabfold_env environment)"
 echo "  ✓ Boltz (boltz_env environment, Python 3.12)"
 echo "  ✓ PyRosetta"
 echo "  ✓ System dependencies (kalign, DockQ)"
@@ -696,5 +739,6 @@ echo "3. Verify installation: bash scripts/verify_installation.sh"
 echo "4. Run the pipeline: python main.py --target-pdb target.pdb --interactive"
 echo ""
 echo "Note: To use RFdiffusion, activate SE3nv: conda activate SE3nv"
+echo "      To use ColabFold, activate colabfold_env: conda activate colabfold_env"
 echo "      To use Boltz, activate boltz_env: conda activate boltz_env"
 echo ""
