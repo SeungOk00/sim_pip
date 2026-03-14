@@ -31,18 +31,18 @@ DEFAULT_CONFIG = {
             "binder_length": "80-80",
             "noise_scale": 0.0,
             "output_prefix": "binder",
-            "max_refinement_iterations": 3  # Renumbering 구현 완료
+            "max_refinement_iterations": 1  # Renumbering 구현 완료
         },
         "proteinmpnn": {
             "path": str(Path(__file__).resolve().parent.parent / "tools/proteinmpnn"),
             "num_seq_per_target": 10,
-            "sampling_temps": [0.1, 0.2, 0.3],
+            "sampling_temps": [0.3],
             "batch_size": 1,
             "seed": 42,
             "design_chains": "B",
             "fixed_positions_jsonl": ""
         },
-        "max_candidates_per_target": 10
+        "max_candidates_per_target": 1
     },
     # Phase 3-A: Fast Screening
     "phase3_fast": {

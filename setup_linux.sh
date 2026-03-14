@@ -670,7 +670,6 @@ mkdir -p data/outputs/proteinmpnn
 mkdir -p data/outputs/chai1
 mkdir -p data/outputs/boltz
 mkdir -p data/outputs/colabfold
-mkdir -p data/outputs/phase3_fast
 mkdir -p data/candidates
 mkdir -p data/runs
 mkdir -p logs

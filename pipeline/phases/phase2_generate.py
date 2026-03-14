@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import List
 import logging
 
-from ..models import DesignCandidate, PipelineState, RunRecord
+from ..models import DesignCandidate, PipelineState, RunRec
+ord
 from ..utils.tool_wrapper import RFdiffusionRunner, ProteinMPNNRunner
-from ..utils.file_ops import ensure_dir, get_next_candidate_id, get_date_dir
+from ..utils.file_ops import ensure_dir, get_next_candidate_id
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -57,16 +58,16 @@ class Phase2GenerativeDesign:
         project_root = Path(self.config['project_root'])
         run_dir = project_root / self.config['paths']['runs'] / state.run_id / "phase2_generate"
         ensure_dir(run_dir)
-        
+        now = datetime.now()
+        date_dir = now.strftime("%Y-%m-%d")
+        time_dir = now.strftime("%H-%M-%S")
         outputs_root = project_root / self.config['paths']['outputs']
-        date_dir = get_date_dir()
-        rfdiffusion_out_dir = outputs_root / "rfdiffusion" / date_dir / state.run_id
-        proteinmpnn_out_dir = outputs_root / "proteinmpnn" / date_dir / state.run_id
+        rfdiffusion_out_dir = outputs_root / "rfdiffusion" / date_dir / time_dir
+        proteinmpnn_out_dir = outputs_root / "proteinmpnn" / date_dir / time_dir
         ensure_dir(rfdiffusion_out_dir)
         ensure_dir(proteinmpnn_out_dir)
         
-        # Save candidates under: candidates/date/run_id/candidate_id
-        candidates_dir = project_root / self.config['paths']['candidates'] / date_dir / state.run_id
+        candidates_dir = project_root / self.config['paths']['candidates']
         ensure_dir(candidates_dir)
         
         # Step 1: Generate de novo backbones
@@ -94,7 +95,8 @@ class Phase2GenerativeDesign:
             candidates = candidates[:max_candidates]
         
         # Update state
-        state.candidates.extend(candidates)
+        # Candidates are already appended to state inside _design_sequences()
+        # to keep candidate IDs unique during generation, so do not extend again.
         state.current_phase = "phase3_fast"
         
         logger.info(f"\n{'=' * 80}")
@@ -313,3 +315,4 @@ class Phase2GenerativeDesign:
                 continue
         
         return candidates
+
