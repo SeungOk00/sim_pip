@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import List
 import logging
 
-from ..models import DesignCandidate, PipelineState, RunRec
-ord
+from ..models import DesignCandidate, PipelineState, RunRecord
 from ..utils.tool_wrapper import RFdiffusionRunner, ProteinMPNNRunner
 from ..utils.file_ops import ensure_dir, get_next_candidate_id
 from datetime import datetime
@@ -315,4 +314,3 @@ class Phase2GenerativeDesign:
                 continue
         
         return candidates
-
