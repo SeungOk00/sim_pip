@@ -13,6 +13,7 @@ Usage:
 import sys
 import os
 import logging
+import subprocess
 from pathlib import Path
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
@@ -54,6 +55,43 @@ def test_phase1_2_3():
     # Load configuration
     logger.info("Loading configuration...")
     config = Config()
+
+    # Preflight check: phase3 ColabFold runtime must be available before long run.
+    colab_cfg = config.config.get("phase3_deep", {}).get("colabfold", {})
+    colab_venv = Path(colab_cfg.get("venv_path", ""))
+    colab_python = colab_venv / "bin" / "python"
+    colab_path = Path(colab_cfg.get("path", ""))
+    if not colab_python.exists():
+        raise RuntimeError(
+            f"ColabFold python not found: {colab_python}\n"
+            "Set phase3_deep.colabfold.venv_path correctly (e.g. .colabfold_venv)."
+        )
+    if not colab_path.exists():
+        raise RuntimeError(
+            f"ColabFold source path not found: {colab_path}\n"
+            "Set phase3_deep.colabfold.path correctly in config."
+        )
+    preflight_env = os.environ.copy()
+    preflight_env["PYTHONPATH"] = (
+        str(colab_path)
+        if not preflight_env.get("PYTHONPATH")
+        else f"{colab_path}:{preflight_env['PYTHONPATH']}"
+    )
+    preflight = subprocess.run(
+        [str(colab_python), "-m", "colabfold.batch", "-h"],
+        env=preflight_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if preflight.returncode != 0:
+        stderr_head = (preflight.stderr or "")[:1000]
+        raise RuntimeError(
+            "ColabFold preflight failed. "
+            f"python={colab_python}\n"
+            f"stderr(head):\n{stderr_head}"
+        )
+    logger.info(f"✓ ColabFold preflight passed ({colab_python})")
     
     # Get project root
     script_dir = Path(__file__).parent

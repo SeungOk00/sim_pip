@@ -51,7 +51,7 @@ phase3_fast:
 phase3_deep:
   colabfold:
     path: /home01/hpc194a02/test/sim_pip/tools/colabfold
-    venv_path: /home01/hpc194a02/test/sim_pip/.venv
+    venv_path: /home01/hpc194a02/test/sim_pip/.colabfold_venv
     command_template: "python -m colabfold.batch {input_path} {output_dir} --model-type alphafold2_multimer_v3 --rank multimer --num-models 5 --num-recycle 3"
     input_file: colabfold_input.fasta
     output_file: colabfold_pred.pdb

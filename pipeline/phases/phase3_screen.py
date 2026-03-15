@@ -9,6 +9,9 @@ import subprocess
 import re
 import hashlib
 import shutil
+import os
+import shlex
+import json
 
 from ..models import DesignCandidate, PipelineState
 from ..utils.tool_wrapper import ChaiRunner, BoltzRunner
@@ -248,7 +251,7 @@ class Phase3ScreeningAndValidation:
         ensure_dir(cand_dir)
 
         try:
-            colabfold_pdb = self._run_colabfold(candidate, cand_dir)
+            colabfold_pdb = self._run_colabfold(candidate, cand_dir, state)
             
             # 1. RFdiffusion 백본 vs ColabFold 바인더 RMSD
             rfdiff_backbone = self._resolve_rfdiffusion_pdb(candidate)
@@ -304,31 +307,121 @@ class Phase3ScreeningAndValidation:
             candidate.decision = {"gate": "FAIL", "reason": f"Validation error: {str(e)}"}
             candidate.stage = "failed"
 
-    def _run_colabfold(self, candidate: DesignCandidate, output_dir: Path) -> Path:
-        logger.info("  Running ColabFold (placeholder)...")
-        output_pdb = output_dir / "colabfold_pred.pdb"
+    def _run_colabfold(self, candidate: DesignCandidate, output_dir: Path, state: PipelineState) -> Path:
+        logger.info("  Running ColabFold...")
 
-        # Placeholder mode: reuse an existing predicted complex so downstream
-        # metrics can run without requiring a real ColabFold invocation.
-        source_pdb = None
-        if candidate.complex_pdb_path:
-            cp = Path(candidate.complex_pdb_path)
-            if cp.exists():
-                source_pdb = cp
+        colabfold_cfg = self.deep_config["colabfold"]
+        target_pdb = Path(state.target.target_pdb_path)
+        if not target_pdb.is_absolute():
+            target_pdb = Path(self.config["project_root"]) / target_pdb
+        if not target_pdb.exists():
+            raise FileNotFoundError(f"Target PDB not found for ColabFold: {target_pdb}")
 
-        if source_pdb is None and candidate.pdb_path:
-            pp = Path(candidate.pdb_path)
-            if pp.exists():
-                source_pdb = pp
-
-        if source_pdb is None:
-            raise FileNotFoundError(
-                f"No source structure available for placeholder ColabFold: {candidate.candidate_id}"
-            )
+        if not candidate.binder_sequence:
+            fasta_path = self._resolve_mpnn_fasta(candidate)
+            if fasta_path is not None:
+                candidate.binder_sequence = self._read_first_fasta_sequence(fasta_path)
+        if not candidate.binder_sequence:
+            raise ValueError(f"No binder sequence available for ColabFold: {candidate.candidate_id}")
 
         ensure_dir(output_dir)
-        shutil.copy2(source_pdb, output_pdb)
-        return output_pdb
+        input_path = output_dir / colabfold_cfg.get("input_file", "colabfold_input.fasta")
+        self._write_colabfold_fasta_input(
+            target_pdb=target_pdb,
+            target_chain=state.target.chain_id,
+            binder_sequence=candidate.binder_sequence,
+            out_fasta=input_path,
+            job_name=candidate.candidate_id,
+        )
+
+        command_template = colabfold_cfg.get(
+            "command_template",
+            "python -m colabfold.batch {input_path} {output_dir} --model-type alphafold2_multimer_v3 --rank multimer --num-models 5 --num-recycle 3",
+        )
+        command = shlex.split(
+            command_template.format(
+                input_path=str(input_path),
+                output_dir=str(output_dir),
+                candidate_id=candidate.candidate_id,
+            )
+        )
+
+        venv_path = colabfold_cfg.get("venv_path")
+        if command and command[0] == "python" and venv_path:
+            venv_python = Path(venv_path) / "bin" / "python"
+            if venv_python.exists():
+                command[0] = str(venv_python)
+        elif command and command[0] == "colabfold_batch" and venv_path:
+            venv_cli = Path(venv_path) / "bin" / "colabfold_batch"
+            if venv_cli.exists():
+                command[0] = str(venv_cli)
+
+        tool_path = Path(colabfold_cfg["path"])
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = str(tool_path) if not existing_pythonpath else f"{tool_path}:{existing_pythonpath}"
+
+        result = subprocess.run(
+            command,
+            cwd=str(tool_path),
+            capture_output=True,
+            text=True,
+            timeout=int(colabfold_cfg.get("timeout_seconds", 14400)),
+            env=env,
+        )
+        if result.returncode != 0:
+            stdout_text = (result.stdout or "")[:2000]
+            stderr_text = (result.stderr or "")[:4000]
+            logger.warning(f"  ColabFold command failed: {' '.join(command)}")
+            if stdout_text:
+                logger.warning(f"  ColabFold STDOUT(head): {stdout_text}")
+            if stderr_text:
+                logger.warning(f"  ColabFold STDERR(head): {stderr_text}")
+            raise RuntimeError(f"ColabFold failed with exit code {result.returncode}")
+
+        output_pdb, pae_json, scores_json = self._resolve_colabfold_outputs(output_dir, candidate.candidate_id)
+        normalized_pdb = output_dir / colabfold_cfg.get("output_file", "colabfold_pred.pdb")
+        normalized_pae = output_dir / colabfold_cfg.get("pae_json", "predicted_aligned_error_v1.json")
+        normalized_scores = output_dir / colabfold_cfg.get("scores_json", "scores.json")
+
+        if output_pdb != normalized_pdb:
+            shutil.copy2(output_pdb, normalized_pdb)
+        if pae_json != normalized_pae:
+            shutil.copy2(pae_json, normalized_pae)
+        if scores_json != normalized_scores:
+            shutil.copy2(scores_json, normalized_scores)
+
+        return normalized_pdb
+
+    def _resolve_colabfold_outputs(self, output_dir: Path, job_name: str) -> tuple[Path, Path, Path]:
+        preferred_pdbs = [
+            *sorted(output_dir.glob(f"{job_name}_relaxed_rank_001_*.pdb")),
+            *sorted(output_dir.glob(f"{job_name}_unrelaxed_rank_001_*.pdb")),
+            *sorted(output_dir.glob(f"{job_name}_*_rank_001_*.pdb")),
+            *sorted(output_dir.glob("*rank_001*.pdb")),
+            *sorted(output_dir.glob("*.pdb")),
+        ]
+        if not preferred_pdbs:
+            raise FileNotFoundError(f"ColabFold PDB output not found under {output_dir}")
+
+        pae_candidates = [
+            output_dir / f"{job_name}_predicted_aligned_error_v1.json",
+            *sorted(output_dir.glob("*predicted_aligned_error_v1.json")),
+        ]
+        pae_json = next((path for path in pae_candidates if path.exists()), None)
+        if pae_json is None:
+            raise FileNotFoundError(f"ColabFold PAE JSON not found under {output_dir}")
+
+        score_candidates = [
+            *sorted(output_dir.glob(f"{job_name}_scores_rank_001_*.json")),
+            *sorted(output_dir.glob("*scores_rank_001_*.json")),
+            *sorted(output_dir.glob("*scores*.json")),
+        ]
+        scores_json = next((path for path in score_candidates if path.exists()), None)
+        if scores_json is None:
+            raise FileNotFoundError(f"ColabFold scores JSON not found under {output_dir}")
+
+        return preferred_pdbs[0], pae_json, scores_json
 
     def _calculate_dockq(self, model_pdb: Path, reference_pdb: Path) -> float:
         """
@@ -722,6 +815,21 @@ class Phase3ScreeningAndValidation:
             f.write(f">protein|name=target_chain_{target_chain}\n{target_seq}\n")
             f.write(">protein|name=binder_chain_B\n")
             f.write(f"{binder_sequence}\n")
+
+    def _write_colabfold_fasta_input(
+        self,
+        target_pdb: Path,
+        target_chain: str,
+        binder_sequence: str,
+        out_fasta: Path,
+        job_name: str,
+    ):
+        """Write ColabFold complex FASTA using the `target:binder` sequence format."""
+        out_fasta.parent.mkdir(parents=True, exist_ok=True)
+        target_seq = self._extract_chain_sequence_from_pdb(target_pdb, target_chain)
+        with open(out_fasta, "w") as f:
+            f.write(f">{job_name}\n")
+            f.write(f"{target_seq}:{binder_sequence}\n")
 
     def _extract_chain_sequence_from_pdb(self, pdb_path: Path, chain_id: str) -> str:
         """Extract one-letter AA sequence from ATOM records of one chain."""

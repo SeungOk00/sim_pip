@@ -71,7 +71,14 @@ DEFAULT_CONFIG = {
     # Phase 3-B: Deep Validation
     "phase3_deep": {
         "colabfold": {
-            "path": str(Path(__file__).resolve().parent.parent / "tools/colabfold")
+            "path": str(Path(__file__).resolve().parent.parent / "tools/colabfold"),
+            "venv_path": str(Path(__file__).resolve().parent.parent / ".venv"),
+            "command_template": "python -m colabfold.batch {input_path} {output_dir} --model-type alphafold2_multimer_v3 --rank multimer --num-models 5 --num-recycle 3",
+            "jobname": "complex",
+            "input_file": "colabfold_input.fasta",
+            "output_file": "colabfold_pred.pdb",
+            "pae_json": "predicted_aligned_error_v1.json",
+            "scores_json": "scores.json"
         },
         "gates": {
             "backbone_rmsd_threshold": 2.0,      # RFdiffusion 백본 vs ColabFold 바인더 RMSD
