@@ -534,43 +534,43 @@ echo ""
 echo "[7/11] Installing ColabFold (separate environment)..."
 echo ""
 
-# ColabFold is installed in a dedicated conda env to avoid conflicts with .venv.
-COLABFOLD_ENV="colabfold_env"
+# ColabFold is installed in a dedicated Python venv to avoid conflicts with .venv.
+COLABFOLD_VENV="$PROJECT_ROOT/.colabfold_venv"
 
-# First deactivate any existing venv
-deactivate 2>/dev/null || true
-
-eval "$(conda shell.bash hook)"
-if conda env list | awk '{print $1}' | grep -qx "$COLABFOLD_ENV"; then
-    echo "$COLABFOLD_ENV environment already exists."
-    echo "✓ Using existing $COLABFOLD_ENV environment."
-else
-    echo "Creating $COLABFOLD_ENV environment..."
-    "$CONDA_CMD" create -n "$COLABFOLD_ENV" -c conda-forge -c bioconda \
-        python=3.12 kalign2=2.04 hhsuite=3.3.0 mmseqs2=18.8cc5c -y
-    echo "✓ $COLABFOLD_ENV environment created."
+# Ensure main .venv python exists (created in step 5)
+if [ ! -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+    echo "ERROR: Main .venv python not found at $PROJECT_ROOT/.venv/bin/python"
+    exit 1
 fi
 
-conda activate "$COLABFOLD_ENV"
-python -m pip install --upgrade pip || echo "WARNING: pip upgrade failed, continuing..."
+echo "Preparing ColabFold venv: $COLABFOLD_VENV"
+if [ -d "$COLABFOLD_VENV" ]; then
+    echo "✓ Reusing existing .colabfold_venv."
+else
+    # Use virtualenv for portability (some systems miss python3-venv/ensurepip).
+    "$PROJECT_ROOT/.venv/bin/python" -m pip install --upgrade virtualenv
+    "$PROJECT_ROOT/.venv/bin/python" -m virtualenv "$COLABFOLD_VENV"
+    echo "✓ Created .colabfold_venv."
+fi
 
-echo "Installing ColabFold package..."
-python -m pip install "colabfold[alphafold,openmm]" || {
-    echo "WARNING: Full ColabFold extras install failed. Trying base package..."
-    python -m pip install colabfold
+"$COLABFOLD_VENV/bin/python" -m pip install --upgrade pip setuptools wheel || \
+    echo "WARNING: pip/setuptools/wheel upgrade failed, continuing..."
+
+echo "Installing ColabFold package in .colabfold_venv..."
+"$COLABFOLD_VENV/bin/python" -m pip install "colabfold[alphafold]" || {
+    echo "WARNING: ColabFold[alphafold] install failed. Trying base package..."
+    "$COLABFOLD_VENV/bin/python" -m pip install colabfold
 }
 
-if command -v colabfold_batch &> /dev/null; then
-    echo "✓ ColabFold installed successfully."
+if PYTHONPATH="$PROJECT_ROOT/tools/colabfold" "$COLABFOLD_VENV/bin/python" -m colabfold.batch -h >/dev/null 2>&1; then
+    echo "✓ ColabFold installed successfully in .colabfold_venv."
 else
-    echo "WARNING: colabfold_batch command not found. ColabFold installation may be incomplete."
+    echo "WARNING: ColabFold smoke test failed in .colabfold_venv."
 fi
 
-conda deactivate
-
-# Reactivate main venv
+# Reactivate main venv for remaining setup steps
 source .venv/bin/activate
-echo "✓ Switched back to main .venv environment."
+echo "✓ Switched to main .venv environment."
 echo ""
 
 echo "[8/11] Installing Boltz (separate environment)..."
@@ -726,7 +726,7 @@ echo "Installed components:"
 echo "  ✓ RFdiffusion (SE3nv environment)"
 echo "  ✓ Main pipeline (.venv)"
 echo "  ✓ Chai-1"
-echo "  ✓ ColabFold (colabfold_env environment)"
+echo "  ✓ ColabFold (.colabfold_venv)"
 echo "  ✓ Boltz (boltz_env environment, Python 3.12)"
 echo "  ✓ PyRosetta"
 echo "  ✓ System dependencies (kalign, DockQ)"
@@ -739,6 +739,6 @@ echo "3. Verify installation: bash scripts/verify_installation.sh"
 echo "4. Run the pipeline: python main.py --target-pdb target.pdb --interactive"
 echo ""
 echo "Note: To use RFdiffusion, activate SE3nv: conda activate SE3nv"
-echo "      To use ColabFold, activate colabfold_env: conda activate colabfold_env"
+echo "      To use ColabFold, activate .colabfold_venv: source .colabfold_venv/bin/activate"
 echo "      To use Boltz, activate boltz_env: conda activate boltz_env"
 echo ""
